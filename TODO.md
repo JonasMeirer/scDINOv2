@@ -3,4 +3,5 @@
 - [x] implement dino training
 - [x] give credit to lightly
 - [x] add DINOv1
+- [ ] huggingface compatibility for DINO and DINOV2
 - [ ] run benchmark
