@@ -19,6 +19,8 @@ dependencies = [
   "scikit-image>=0.26.0",
   "ipynb>=0.5.1",
   "seaborn>=0.13.2",
+  "mlflow>=1.27.0",
+  "timm>=1.0.26",
 ]
 
 [tool.uv.sources]

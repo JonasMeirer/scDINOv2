@@ -1,5 +1,5 @@
 # DINOv2 Model Configuration
-#_target_: src.models.lightning.dinov2.DINOv2
+_target_: src.scdino.models.lightning.dinov2.DINOv2
 
 name: "dinov2"
 
@@ -33,14 +33,7 @@ architecture:
     batch_norm: false
   # Model behavior
   ibot_separate_head: false
-  # kNN evaluation parameters
-  knn_eval:
-    enable_knn_eval: true
-    knn_k: 20
-    knn_temperature: 0.07
-    knn_max_train_batches: 3000
-    knn_val_chunk_size: 1024
-    knn_train_chunk_size: 50000
+  
 
 training:
   # Trainer parameters
@@ -84,3 +77,11 @@ training:
       p: 2
       eps: 1e-8
       weight: 0.1
+  # kNN evaluation parameters
+  knn_eval:
+    enable_knn_eval: true
+    knn_k: 20
+    knn_temperature: 0.07
+    knn_max_train_batches: 3000
+    knn_val_chunk_size: 1024
+    knn_train_chunk_size: 50000

@@ -1,10 +1,10 @@
 defaults:
   - datamodule: chronotype
-  - model: dinov2-small #dinov3-vitb16
+  - model: pretrained/dinov2-small #dinov3-vitb16
   - _self_
 
-mode: "inference"
-max_train_batches: 100
+mode: "inference" # needed for the transformation
+max_batches: 100 # limit processed batches
 
 # Hardware configuration
 datamodule:

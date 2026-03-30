@@ -20,8 +20,8 @@ def run_inference(cfg: DictConfig):
     val_loader = datamodule.val_dataloader()
 
     max_batches = (
-        cfg.max_train_batches
-        if cfg.max_train_batches is not None
+        cfg.max_batches
+        if cfg.max_batches is not None
         else len(train_loader)
     )
 
@@ -59,7 +59,7 @@ def run_inference(cfg: DictConfig):
     test_features = []
     test_labels = []
     for i, (images, labels) in tqdm(enumerate(train_loader), total=max_batches):
-        if i >= cfg.max_train_batches:
+        if i >= cfg.max_batches:
             break
         with torch.no_grad():
             train_features.append(extract_embeddings(model(images.to(device))).detach().cpu())

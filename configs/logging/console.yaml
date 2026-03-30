@@ -1,0 +1,3 @@
+name: "console"
+logger_name: "scdino-console"
+save_dir: ${hydra:runtime.output_dir}

@@ -1,0 +1,11 @@
+_target_: src.scdino.train.trainer.HydraTrainer
+
+max_epochs: ${model.training.max_epochs}
+devices: ${hardware.devices}
+hardware_accelerator: ${hardware.accelerator}
+check_val_every_n_epoch: 1
+log_every_n_steps: 50
+limit_train_batches: ${max_batches}
+ckpt_every_n_epochs: null
+default_root_dir: ${hydra:runtime.output_dir}
+logging: ${logging}

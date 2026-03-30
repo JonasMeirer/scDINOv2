@@ -1,0 +1,20 @@
+defaults:
+  - datamodule: chronotype
+  - model: dinov2
+  - trainer: default
+  - logging: console
+  - _self_
+
+mode: "train"
+max_batches: 100 # for debugging
+
+hardware:
+  accelerator: "gpu"
+  devices: 1
+
+# Hydra configuration
+hydra:
+  run:
+    dir: outputs/train/${model.name}_${datamodule.dataset}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true

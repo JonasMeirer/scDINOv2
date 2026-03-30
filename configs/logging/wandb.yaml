@@ -1,0 +1,5 @@
+name: "wandb"
+project: "scdino"
+entity: null
+run_name: ${model.name}_${datamodule.dataset}
+tags: [${mode}, ${model.name}, ${datamodule.dataset}]
