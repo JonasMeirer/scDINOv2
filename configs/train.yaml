@@ -1,12 +1,12 @@
 defaults:
   - datamodule: chronotype
-  - model: dinov2
+  - model: dino
   - trainer: default
   - logging: console
   - _self_
 
 mode: "train"
-max_batches: 100 # for debugging
+max_batches: 5000 # for debugging, leave blank for full training
 
 hardware:
   accelerator: "gpu"

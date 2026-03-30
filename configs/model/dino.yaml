@@ -1,7 +1,7 @@
-# DINOv2 Model Configuration
-_target_: src.scdino.models.lightning.dinov2.DINOv2
+# DINO Model Configuration
+_target_: src.scdino.models.lightning.dino.DINO
 
-name: "dinov2"
+name: "dino"
 
 # Model architecture parameters
 architecture:
@@ -17,6 +17,10 @@ architecture:
       drop_path_rate: 0.1
       mlp_ratio: 4
       reg_tokens: 8
+    resnet:
+      in_chans: 5
+      embed_dim: 128
+      stem_width: 32
   # DINO head parameters
   dino_head:
     embed_dim: 64

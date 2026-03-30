@@ -8,12 +8,12 @@ from copy import deepcopy
 
 import lightning as L
 
-from src.scdino.models.backbones.dinov2 import DINOv2 as DINOv2Skeleton
+from src.scdino.models.backbones.dino import DINO as DINOSkeleton
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
-from src.scdino.models.lightning.utils import DINOLoss, IBOTPatchLoss, KoLeoLoss, update_momentum, cosine_schedule, linear_warmup_schedule
+from src.scdino.models.lightning.utils import DINOLoss, update_momentum, cosine_schedule
 
 
-class DINOv2(L.LightningModule):
+class DINO(L.LightningModule):
     def __init__(
         self,
         name: str,
@@ -31,24 +31,20 @@ class DINOv2(L.LightningModule):
         self.ibot_separate_head = architecture.ibot_separate_head
         self.knn_eval_config = training.knn_eval
         self.training_config = training
+
         
-        model = DINOv2Skeleton(
+        model = DINOSkeleton(
             backbone_config=self.backbone_config,
             dino_head_config=self.dino_head_config,
-            ibot_head_config=self.ibot_head_config,
-            ibot_separate_head=self.ibot_separate_head
         )
 
         self.teacher_backbone = model.teacher_backbone
         self.student_backbone = model.student_backbone
-
         self.teacher_head = model.teacher_head
         self.student_head = model.student_head
 
-        # Losses
+        # Loss
         dino_loss_config = self.training_config["losses"]["dino"]
-        ibot_loss_config = self.training_config["losses"]["ibot"]
-        koleo_loss_config = self.training_config["losses"]["koleo"]
         
         self.dino_criterion = DINOLoss(
             output_dim=dino_loss_config["output_dim"],
@@ -58,17 +54,6 @@ class DINOv2(L.LightningModule):
             student_temp=dino_loss_config["student_temp"],
             center_momentum=dino_loss_config["center_momentum"],
             center_mode=dino_loss_config["center_mode"]
-        )
-        self.ibot_criterion = IBOTPatchLoss(
-            output_dim=ibot_loss_config["output_dim"],
-            teacher_temp=ibot_loss_config["teacher_temp"],
-            student_temp=ibot_loss_config["student_temp"],
-            center_mode=ibot_loss_config["center_mode"],
-            center_momentum=ibot_loss_config["center_momentum"]
-        )
-        self.koleo_criterion = KoLeoLoss(
-            p=koleo_loss_config["p"],
-            eps=koleo_loss_config["eps"]
         )
         
         # kNN evaluation configuration
@@ -87,110 +72,54 @@ class DINOv2(L.LightningModule):
             self.validation_labels = []
 
     def forward(self, x: Tensor) -> Tensor:
-        pass
+        """Forward pass through model."""
+        return self.teacher_backbone(x)
     
     def encode(self, x: Tensor) -> Tensor:
         """ For compatibility in the embed.py script """
         self.teacher_backbone.eval()
         with torch.no_grad():
-            embeds = self.teacher_backbone.encode(x)[:,0]
+            embeds = self.teacher_backbone(x).flatten(start_dim=1)
         self.teacher_backbone.train()
         return embeds
 
-    def forward_teacher(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        features = self.teacher_backbone.encode(x)
-        cls_tokens = features[:, 0]
-        return cls_tokens, features
+    def forward_teacher(self, x: Tensor) -> Tensor:
+        """Forward pass through teacher model."""
+        features = self.teacher_backbone(x).flatten(start_dim=1)
+        z = self.teacher_head(features)
+        return z
 
-    def forward_student(
-        self, x: Tensor, mask: Tensor | None
-    ) -> tuple[Tensor, Tensor | None]:
-        features = self.student_backbone.encode(x, mask=mask)
-        cls_tokens = features[:, 0]
-        masked_features = None if mask is None else features[mask]
-        return cls_tokens, masked_features
+    def forward_student(self, x: Tensor) -> Tensor:
+        """Forward pass through student model with head."""
+        features = self.student_backbone(x).flatten(start_dim=1)
+        z = self.student_head(features)
+        return z
 
     def training_step(
         self, batch: tuple[list[Tensor], Tensor, list[str]], batch_idx: int
     ) -> Tensor:
         views, _ = batch[0], batch[1]
-        global_views = torch.cat(views[:2])
-        local_views = torch.cat(views[2:])
-
-        # Masking
-        B = len(global_views)
-        sequence_length = self.teacher_backbone.sequence_length
-        mask = global_views.new_zeros((B, sequence_length), dtype=torch.bool)
-        # Mask patches except class token.
-        H, W = self.teacher_backbone.vit.patch_embed.grid_size
-        n_registered_tokens = self.teacher_backbone.vit.num_prefix_tokens
-        assert (
-            H * W == sequence_length - n_registered_tokens
-        ), f"Unexpected grid size: {H}x{W}, sequence_length {sequence_length}"
-        block_mask = random_block_mask(size=(B, H, W), device=mask.device)
-        mask[:, n_registered_tokens:] = block_mask.flatten(start_dim=1)
-
-        # Teacher forward
+        
+        # Move views to device
+        views = [view.to(self.device) for view in views]
+        global_views = views[:2]  # First two views are global
+        
+        # Teacher forward (with gradient disabled)
         with torch.no_grad():
-            teacher_cls_token, teacher_features = self.forward_teacher(global_views)
-            teacher_cls_out = self.teacher_head.dino_head.forward(teacher_cls_token)
-            teacher_masked_out = self.teacher_head.ibot_head.forward(
-                teacher_features[mask]
-            )
-
-        # Student forward
-        student_global_cls_token, student_global_masked_features = self.forward_student(
-            global_views, mask=mask
-        )
-        student_global_cls_out = self.student_head.dino_head.forward(
-            student_global_cls_token
-        )
-        student_global_masked_out = self.student_head.ibot_head.forward(
-            student_global_masked_features
-        )
-
-        student_local_cls_token, _ = self.forward_student(local_views, mask=None)
-        student_local_cls_out = self.student_head.dino_head.forward(
-            student_local_cls_token
-        )
-        student_cls_out = torch.cat([student_global_cls_out, student_local_cls_out])
-
-        teacher_temp_config = self.training_config["teacher_temp"]
-        teacher_temp = linear_warmup_schedule(
-            step=self.trainer.global_step,
-            warmup_steps=int(
-                teacher_temp_config["warmup_steps"] / self.trainer.max_epochs * self.trainer.estimated_stepping_batches
-            ),
-            start_value=teacher_temp_config["start_value"],
-            end_value=teacher_temp_config["end_value"],
-        )
-        dino_loss = self.dino_criterion(
-            teacher_out=teacher_cls_out.chunk(2),
-            student_out=student_cls_out.chunk(len(views)),
-            teacher_temp=teacher_temp,
-        )
-        ibot_loss = self.ibot_criterion(
-            teacher_out=teacher_masked_out,
-            student_out=student_global_masked_out,
-            mask=block_mask,
-            teacher_temp=teacher_temp,
-        )
-        koleo_loss = sum(
-            self.koleo_criterion(t) for t in student_global_cls_token.chunk(2)
-        )
+            teacher_out = [self.forward_teacher(view) for view in global_views]
         
-        # Get loss weights from config
-        dino_weight = self.training_config["losses"]["dino"]["weight"]
-        ibot_weight = self.training_config["losses"]["ibot"]["weight"]
-        koleo_weight = self.training_config["losses"]["koleo"]["weight"]
+        # Student forward for all views
+        student_out = [self.forward_student(view) for view in views]
         
-        loss = dino_weight * dino_loss + ibot_weight * ibot_loss + koleo_weight * koleo_loss
+        # Compute DINO loss
+        loss = self.dino_criterion(
+            teacher_out=teacher_out,
+            student_out=student_out,
+            epoch=self.current_epoch
+        )
 
-        # Log losses (both to pytorch lightning and wandb if enabled)
-        self.log("train/dino_loss", dino_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True)
-        self.log("train/ibot_loss", ibot_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True)
-        self.log("train/koleo_loss", koleo_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True)
-        self.log("train/total_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # Log loss (both to pytorch lightning and wandb if enabled)
+        self.log("train/dino_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
         return loss
 
@@ -218,8 +147,12 @@ class DINOv2(L.LightningModule):
             if group["weight_decay"] != 0.0:
                 group["weight_decay"] = weight_decay
 
+    def on_after_backward(self):
+        """Cancel gradients for the last layer during warmup."""
+        self.student_head.cancel_last_layer_gradients(current_epoch=self.current_epoch)
+
     def on_train_batch_end(self, outputs, batch, batch_idx):
-        # Momentum update teacher.
+        """Update teacher networks with momentum."""
         momentum_config = self.training_config["momentum"]
         momentum = cosine_schedule(
             step=self.trainer.global_step,
@@ -252,13 +185,13 @@ class DINOv2(L.LightningModule):
             
         # Extract features using teacher backbone (frozen, so consistent)
         with torch.no_grad():
-            cls_tokens, _ = self.forward_teacher(images)
+            features = self.teacher_backbone(images).flatten(start_dim=1)
             
         # Store features and labels for epoch-end kNN evaluation
-        self.validation_features.append(cls_tokens.cpu())
+        self.validation_features.append(features.cpu())
         self.validation_labels.append(labels.cpu())
         
-        return {"features": cls_tokens, "labels": labels}
+        return {"features": features, "labels": labels}
     
     def on_validation_epoch_start(self):
         
@@ -288,10 +221,10 @@ class DINOv2(L.LightningModule):
                 images = images.to(self.device)
                 
                 # Extract features using teacher backbone
-                cls_tokens, _ = self.forward_teacher(images)
+                features = self.teacher_backbone(images).flatten(start_dim=1)
                 
                 # Store features and labels
-                self.train_features.append(cls_tokens.cpu())
+                self.train_features.append(features.cpu())
                 self.train_labels.append(labels.cpu())
         
         # set transformation back to the original one

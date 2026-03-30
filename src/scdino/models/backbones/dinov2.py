@@ -132,7 +132,9 @@ class DINOv2(nn.Module):
         masked_features = None if mask is None else features[mask]
         return cls_tokens, masked_features
     
-    
+
+# copy pasted from lightly
+# source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/heads.py
 class ProjectionHead(nn.Module):
     """Base class for all projection and prediction heads.
 
@@ -186,7 +188,8 @@ class ProjectionHead(nn.Module):
         return projection
     
     
-    
+ # copy pasted from lightly
+# source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/heads.py
 class DINOv2ProjectionHead(ProjectionHead):
     def __init__(
         self,
@@ -232,7 +235,9 @@ class DINOv2ProjectionHead(ProjectionHead):
         x = self.last_layer(x)
         return x
     
-
+    
+# copy pasted from lightly
+# source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/masked_vision_transformer.py
 class MaskedVisionTransformer(ABC, Module):
     """
     Abstract base class for Masked Vision Transformer models.
@@ -478,7 +483,9 @@ class MaskedVisionTransformer(ABC, Module):
         """
         ...
     
-    
+
+# copy pasted from lightly
+# source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/masked_vision_transformer_timm.py
 class MaskedVisionTransformerTIMM(MaskedVisionTransformer):
     """Masked Vision Transformer class using TIMM.
 
@@ -678,7 +685,9 @@ def init_weights(module: Module) -> None:
         nn.init.constant_(module.bias, 0)
         nn.init.constant_(module.weight, 1.0)
         
-        
+
+# copy pasted from lightly
+# source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/utils.py
 def update_drop_path_rate(
     model: VisionTransformer,
     drop_path_rate: float,

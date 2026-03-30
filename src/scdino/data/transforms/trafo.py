@@ -8,14 +8,14 @@ class Trafo:
     def __init__(self, model: str, mode: str, cfg: DictConfig):
 
         if mode == "inference":
-            # identity transform
+            # no transform
             self.transform = lambda x: x
         else:
-            if model.name == "dinov2":
+            if model.name in ["dinov2", "dino"]:
                 self.transform = DINOTransform(cfg)
             else:
                 raise ValueError(
-                    f"Invalid combination of model and mode: model:{model}, mode:{mode}"
+                    f"Invalid combination of model: {model.name} and mode:{mode}"
                 )
 
     def __call__(self, image: Tensor):
