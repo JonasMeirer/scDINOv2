@@ -36,7 +36,7 @@ class DINOv2(nn.Module):
     def __init__(
         self,
         backbone_config: Dict[str, Any],
-        dino_head_config: Dict[str, Any], 
+        dino_head_config: Dict[str, Any],
         ibot_head_config: Dict[str, Any],
         ibot_separate_head: bool = False,
     ) -> None:
@@ -61,7 +61,7 @@ class DINOv2(nn.Module):
             )
         else:
             raise ValueError(f"Invalid backbone type: {backbone_config['type']}")
-        
+
         self.teacher_backbone = MaskedVisionTransformerTIMM(
             vit=teacher,
             antialias=False,
@@ -73,7 +73,7 @@ class DINOv2(nn.Module):
             drop_path_rate=backbone_config["drop_path_rate"],
             mode="uniform",
         )
-        
+
         freeze_eval_module(self.teacher_backbone)
 
         # Heads
@@ -113,7 +113,7 @@ class DINOv2(nn.Module):
             dino_head=student_dino_head,
             ibot_head=student_ibot_head,
         )
-        
+
         freeze_eval_module(self.teacher_head)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -131,7 +131,7 @@ class DINOv2(nn.Module):
         cls_tokens = features[:, 0]
         masked_features = None if mask is None else features[mask]
         return cls_tokens, masked_features
-    
+
 
 # copy pasted from lightly
 # source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/heads.py
@@ -186,9 +186,9 @@ class ProjectionHead(nn.Module):
         """
         projection: Tensor = self.layers(x)
         return projection
-    
-    
- # copy pasted from lightly
+
+
+# copy pasted from lightly
 # source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/heads.py
 class DINOv2ProjectionHead(ProjectionHead):
     def __init__(
@@ -234,8 +234,8 @@ class DINOv2ProjectionHead(ProjectionHead):
         x = nn.functional.normalize(x, dim=-1, p=2, eps=eps)
         x = self.last_layer(x)
         return x
-    
-    
+
+
 # copy pasted from lightly
 # source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/masked_vision_transformer.py
 class MaskedVisionTransformer(ABC, Module):
@@ -253,8 +253,7 @@ class MaskedVisionTransformer(ABC, Module):
 
     @property
     @abstractmethod
-    def sequence_length(self) -> int:
-        ...
+    def sequence_length(self) -> int: ...
 
     @abstractmethod
     def forward(
@@ -482,7 +481,7 @@ class MaskedVisionTransformer(ABC, Module):
             Tensor after adding positional embeddings, with the same shape as the input.
         """
         ...
-    
+
 
 # copy pasted from lightly
 # source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/modules/masked_vision_transformer_timm.py
@@ -684,7 +683,7 @@ def init_weights(module: Module) -> None:
     elif isinstance(module, LayerNorm):
         nn.init.constant_(module.bias, 0)
         nn.init.constant_(module.weight, 1.0)
-        
+
 
 # copy pasted from lightly
 # source: https://github.com/lightly-ai/lightly/blob/master/lightly/models/utils.py
@@ -730,8 +729,7 @@ def update_drop_path_rate(
             block.drop_path1 = Identity()
             block.drop_path2 = Identity()
 
-    
-    
+
 if __name__ == "__main__":
     # Default config for testing
     backbone_config = {
@@ -741,28 +739,26 @@ if __name__ == "__main__":
         "embed_dim": 64,
         "depth": 8,
         "num_heads": 8,
-        "drop_path_rate": 0.1
+        "drop_path_rate": 0.1,
     }
-    
+
     dino_head_config = {
         "embed_dim": 64,
         "hidden_dim": 64,
         "bottleneck_dim": 64,
         "output_dim": 64,
-        "batch_norm": False
+        "batch_norm": False,
     }
-    
+
     ibot_head_config = {
         "embed_dim": 64,
         "hidden_dim": 64,
         "bottleneck_dim": 64,
         "output_dim": 64,
-        "batch_norm": False
+        "batch_norm": False,
     }
-    
+
     model = DINOv2(backbone_config, dino_head_config, ibot_head_config)
     x = torch.randn(1, 5, 50, 50)
     out = model(x)
     print(out.shape)
-        
-    import code; code.interact(local=dict(globals(), **locals()))

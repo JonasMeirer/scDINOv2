@@ -49,10 +49,19 @@ CROP_CENTER = (25, 25)
 WATERSHED_PARAMS = [(50, 3, 1), (50, 5, 1), (60, 5, 3)]
 
 HARALICK_NAMES = [
-    "AngularSecondMoment", "Contrast", "Correlation",
-    "DifferenceEntropy", "DifferenceVariance", "Entropy",
-    "InfoMeas1", "InfoMeas2", "InverseDifferenceMoment",
-    "SumAverage", "SumEntropy", "SumVariance", "Variance",
+    "AngularSecondMoment",
+    "Contrast",
+    "Correlation",
+    "DifferenceEntropy",
+    "DifferenceVariance",
+    "Entropy",
+    "InfoMeas1",
+    "InfoMeas2",
+    "InverseDifferenceMoment",
+    "SumAverage",
+    "SumEntropy",
+    "SumVariance",
+    "Variance",
 ]
 TEXTURE_NAMES = HARALICK_NAMES + ["Gabor"]
 
@@ -95,7 +104,7 @@ def load_images(
 
 def to_cellpose_input(img: np.ndarray) -> np.ndarray:
     """Build 3-channel (H, W, 3) input from a 5-channel crop."""
-    
+
     apc, brightfield, dapi, gfp, pe = np.split(img, 5, axis=-1)
     return apc + dapi + gfp + pe
 
@@ -228,8 +237,11 @@ def _mass_displacement(mask: np.ndarray, channel: np.ndarray) -> float:
 
 
 def _add_intensity_features(
-    rec: dict, mask: np.ndarray, channel: np.ndarray,
-    compartment: str, ch_name: str,
+    rec: dict,
+    mask: np.ndarray,
+    channel: np.ndarray,
+    compartment: str,
+    ch_name: str,
 ) -> None:
     """Append bulk + edge intensity stats and mass displacement to rec."""
     bool_mask = mask.astype(bool)
@@ -294,15 +306,11 @@ def _haralick_from_glcm(P: np.ndarray) -> dict:
 
     sum_average = np.sum(np.arange(2 * n - 1) * p_xplusy)
     sum_entropy = _entropy(p_xplusy)
-    sum_variance = np.sum(
-        ((np.arange(2 * n - 1) - sum_average) ** 2) * p_xplusy
-    )
+    sum_variance = np.sum(((np.arange(2 * n - 1) - sum_average) ** 2) * p_xplusy)
 
     diff_entropy = _entropy(p_xminusy)
     diff_variance = (
-        np.var(
-            np.repeat(np.arange(n), np.round(p_xminusy * 1000).astype(int))
-        )
+        np.var(np.repeat(np.arange(n), np.round(p_xminusy * 1000).astype(int)))
         if np.sum(p_xminusy) > 0
         else 0.0
     )
@@ -352,9 +360,13 @@ def _quantize_for_texture(
 
 
 def _add_texture_features(
-    rec: dict, mask: np.ndarray, channel: np.ndarray,
-    compartment: str, ch_name: str,
-    distance: int = 6, levels: int = 32,
+    rec: dict,
+    mask: np.ndarray,
+    channel: np.ndarray,
+    compartment: str,
+    ch_name: str,
+    distance: int = 6,
+    levels: int = 32,
 ) -> None:
     """Append Haralick (GLCM, 4 angles averaged) + Gabor features to rec."""
     prefix = f"{compartment}_Texture"
@@ -467,9 +479,7 @@ def _extract_features_one(job: FeatureJob) -> dict | None:
         intensity = regionprops_table(
             labeled, intensity_image=ch, properties=["mean_intensity"]
         )
-        rec[f"CellMeanIntensity_{ch_name}"] = np.mean(
-            intensity["mean_intensity"]
-        )
+        rec[f"CellMeanIntensity_{ch_name}"] = np.mean(intensity["mean_intensity"])
 
         _add_intensity_features(rec, cell_mask, ch, "Cells", ch_name)
         _add_texture_features(rec, cell_mask, ch, "Cells", ch_name)
@@ -520,8 +530,7 @@ def process_batch(
     )[0]
 
     refined = [
-        refine_single_mask(nmask, img)
-        for nmask, img in zip(nucleus_masks, imgs_raw)
+        refine_single_mask(nmask, img) for nmask, img in zip(nucleus_masks, imgs_raw)
     ]
     masks = [r[0] for r in refined]
     methods = [r[1] for r in refined]
@@ -550,15 +559,21 @@ def main():
         help="Directory (searched recursively) containing 5-channel TIFF crops",
     )
     parser.add_argument(
-        "-o", "--output", default=None,
+        "-o",
+        "--output",
+        default=None,
         help="Output CSV path (default: features.csv in working directory)",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=256,
+        "--batch-size",
+        type=int,
+        default=256,
         help="Images per processing batch (default: 256)",
     )
     parser.add_argument(
-        "--io-workers", type=int, default=8,
+        "--io-workers",
+        type=int,
+        default=8,
         help="Threads for parallel TIFF loading (default: 8)",
     )
     parser.add_argument(
@@ -604,12 +619,15 @@ def main():
         return
     logger.info(
         "Found %d images in %s, processing in batches of %d",
-        len(all_paths), input_dir, args.batch_size,
+        len(all_paths),
+        input_dir,
+        args.batch_size,
     )
     if args.feature_workers > 1:
         logger.info(
             "Parallel feature extraction enabled: workers=%d, chunk=%d",
-            args.feature_workers, args.feature_chunk_size,
+            args.feature_workers,
+            args.feature_chunk_size,
         )
     else:
         logger.info("Parallel feature extraction disabled (--feature-workers <= 1)")

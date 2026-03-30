@@ -208,9 +208,7 @@ def _extract_features_one(job: FeatureJob) -> dict | None:
             intensity_image=img[..., ch_idx],
             properties=["mean_intensity"],
         )
-        rec[f"CellMeanIntensity_{ch_name}"] = np.mean(
-            intensity["mean_intensity"]
-        )
+        rec[f"CellMeanIntensity_{ch_name}"] = np.mean(intensity["mean_intensity"])
     return rec
 
 
@@ -257,8 +255,7 @@ def process_batch(
     )[0]
 
     refined = [
-        refine_single_mask(nmask, img)
-        for nmask, img in zip(nucleus_masks, imgs_raw)
+        refine_single_mask(nmask, img) for nmask, img in zip(nucleus_masks, imgs_raw)
     ]
     masks = [r[0] for r in refined]
     methods = [r[1] for r in refined]
@@ -345,11 +342,17 @@ def main():
     if not all_paths:
         logger.error("No .tif/.tiff files found under %s", input_dir)
         return
-    logger.info("Found %d images in %s, processing in batches of %d", len(all_paths), input_dir, args.batch_size)
+    logger.info(
+        "Found %d images in %s, processing in batches of %d",
+        len(all_paths),
+        input_dir,
+        args.batch_size,
+    )
     if args.feature_workers > 1:
         logger.info(
             "Parallel feature extraction enabled: workers=%d, chunk=%d",
-            args.feature_workers, args.feature_chunk_size,
+            args.feature_workers,
+            args.feature_chunk_size,
         )
     else:
         logger.info("Parallel feature extraction disabled (--feature-workers <= 1)")
@@ -364,7 +367,9 @@ def main():
         else nullcontext(None)
     )
     with pool_ctx as feature_pool:
-        for start in tqdm(range(0, len(all_paths), args.batch_size), total=n_batches, desc="Batches"):
+        for start in tqdm(
+            range(0, len(all_paths), args.batch_size), total=n_batches, desc="Batches"
+        ):
             batch_paths = all_paths[start : start + args.batch_size]
             try:
                 records = process_batch(

@@ -1,8 +1,10 @@
 import torch
 from torch import Tensor
-from torch.nn import Module, Parameter
+from torch.nn import Module, Parameter, PairwiseDistance, functional
 import torch.nn.functional as F
 import torch.distributed as dist
+import random
+import math
 import warnings
 import numpy as np
 from typing import Tuple, Optional, Union
@@ -10,7 +12,8 @@ from typing import Tuple, Optional, Union
 
 # all utils copied from lightly
 # source: https://github.com/lightly-ai/lightly/blob/master/lightly
-        
+
+
 class DINOLoss(Module):
     """Implementation of the loss described in 'Emerging Properties in
     Self-Supervised Vision Transformers'. [0]
@@ -180,7 +183,8 @@ class DINOLoss(Module):
         self.center.data = center_momentum(
             center=self.center, batch_center=batch_center, momentum=self.center_momentum
         )
-        
+
+
 class Center(Module):
     """Center module to compute and store the center of a feature tensor as used
     in DINO [0].
@@ -286,7 +290,6 @@ CENTER_MODE_TO_FUNCTION = {
 }
 
 
-
 class IBOTPatchLoss(Module):
     """Implementation of the iBOT patch loss [0] as used in DINOv2 [1].
 
@@ -385,8 +388,8 @@ class IBOTPatchLoss(Module):
         self.center.update(teacher_out)
 
         return loss
-    
-    
+
+
 class KoLeoLoss(Module):
     """KoLeo loss based on [0].
 
@@ -449,8 +452,8 @@ class KoLeoLoss(Module):
         loss = -(nn_dist + self.eps).log().mean()
 
         return loss
-    
-    
+
+
 def random_block_mask(
     size: Tuple[int, int, int],
     batch_mask_ratio: float = 0.5,
@@ -659,8 +662,8 @@ def update_momentum(model: Module, model_ema: Module, m: float):
     """
     for model_ema, model in zip(model_ema.parameters(), model.parameters()):
         model_ema.data = model_ema.data * m + model.data * (1.0 - m)
-        
-        
+
+
 def cosine_schedule(
     step: int,
     max_steps: int,

@@ -19,11 +19,7 @@ def run_inference(cfg: DictConfig):
     train_loader = datamodule.train_dataloader()
     val_loader = datamodule.val_dataloader()
 
-    max_batches = (
-        cfg.max_batches
-        if cfg.max_batches is not None
-        else len(train_loader)
-    )
+    max_batches = cfg.max_batches if cfg.max_batches is not None else len(train_loader)
 
     # Load the model
     device = torch.device(
@@ -33,27 +29,29 @@ def run_inference(cfg: DictConfig):
     )
     model = AutoModel.from_pretrained(cfg.model.name).to(device)
     model.eval()
-    
+
     if cfg.model.name.startswith("facebook/dinov3"):
         # modify the patch embeddings to the correct number of input channels
         model.embeddings.patch_embeddings = conv_mod(
             model.embeddings.patch_embeddings, cfg.datamodule.loader.num_channels
         )
+
         def extract_embeddings(model_output):
             return model_output.pooler_output
-        
+
     elif cfg.model.name.startswith("facebook/dinov2"):
         model.embeddings.patch_embeddings.projection = conv_mod(
-            model.embeddings.patch_embeddings.projection, cfg.datamodule.loader.num_channels
+            model.embeddings.patch_embeddings.projection,
+            cfg.datamodule.loader.num_channels,
         )
         model.embeddings.patch_embeddings.num_channels = 5
+
         def extract_embeddings(model_output):
             return model_output.pooler_output
-        
+
     else:
         raise ValueError(f"Model {cfg.model.name} not supported")
 
-    
     train_features = []
     train_labels = []
     test_features = []
@@ -62,12 +60,16 @@ def run_inference(cfg: DictConfig):
         if i >= cfg.max_batches:
             break
         with torch.no_grad():
-            train_features.append(extract_embeddings(model(images.to(device))).detach().cpu())
+            train_features.append(
+                extract_embeddings(model(images.to(device))).detach().cpu()
+            )
             train_labels.append(labels)
 
     for images, labels in tqdm(val_loader):
         with torch.no_grad():
-            test_features.append(extract_embeddings(model(images.to(device))).detach().cpu())
+            test_features.append(
+                extract_embeddings(model(images.to(device))).detach().cpu()
+            )
             test_labels.append(labels)
 
     train_features = torch.cat(train_features, dim=0)

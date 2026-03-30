@@ -1,6 +1,5 @@
 import torch
 import lightning as L
-from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 
@@ -45,6 +44,7 @@ class HydraTrainer(L.Trainer):
 
         if logging_cfg.get("name") == "mlflow":
             from lightning.pytorch.loggers import MLFlowLogger
+
             return MLFlowLogger(
                 experiment_name=logging_cfg.get("experiment_name"),
                 tracking_uri=logging_cfg.get("tracking_uri"),
@@ -53,6 +53,7 @@ class HydraTrainer(L.Trainer):
             )
         elif logging_cfg.get("name") == "wandb":
             from lightning.pytorch.loggers import WandbLogger
+
             return WandbLogger(
                 project=logging_cfg.get("project"),
                 entity=logging_cfg.get("entity"),
@@ -60,6 +61,7 @@ class HydraTrainer(L.Trainer):
             )
         elif logging_cfg.get("name") == "console":
             from lightning.pytorch.loggers import CSVLogger
+
             return CSVLogger(
                 save_dir=logging_cfg.get("save_dir", "logs"),
                 name=logging_cfg.get("logger_name", "console"),

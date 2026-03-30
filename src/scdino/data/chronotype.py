@@ -38,7 +38,7 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         std_raw = loader.norm_dict.get("raw").get("std")
         mean_norm = loader.norm_dict.get(self.norm_type).get("mean")
         std_norm = loader.norm_dict.get(self.norm_type).get("std")
-        transforms.normalize = {"mean": mean_norm, "std": std_norm} # needed for Trafo
+        transforms.normalize = {"mean": mean_norm, "std": std_norm}  # needed for Trafo
         self.resize = transforms.get("resize", None)
         self.train_transform = Trafo(model, mode, transforms)
         self.norm_only_transform = T.Compose(
