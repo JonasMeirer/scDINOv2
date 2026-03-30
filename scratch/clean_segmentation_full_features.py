@@ -12,7 +12,9 @@ Usage:
 
 import argparse
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +57,7 @@ HARALICK_NAMES = [
 TEXTURE_NAMES = HARALICK_NAMES + ["Gabor"]
 
 logger = logging.getLogger(__name__)
+FeatureJob = tuple[np.ndarray, str, np.ndarray, str]
 
 
 # ---------------------------------------------------------------------------
@@ -95,15 +98,6 @@ def to_cellpose_input(img: np.ndarray) -> np.ndarray:
     
     apc, brightfield, dapi, gfp, pe = np.split(img, 5, axis=-1)
     return apc + dapi + gfp + pe
-    
-    # return np.stack(
-    #     [
-    #         img[..., CH_DAPI],
-    #         img[..., CH_BRIGHTFIELD],
-    #         np.mean(img[..., CH_PROTEIN], axis=-1),
-    #     ],
-    #     axis=-1,
-    # )
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +108,9 @@ def to_cellpose_input(img: np.ndarray) -> np.ndarray:
 def _watershed_fallback(
     img5: np.ndarray, threshold_pct: int = 50, peak_size: int = 3
 ) -> np.ndarray:
-    """Simple watershed on summed fluorescence channels."""
-    signal = img5[..., CH_DAPI] + np.sum(img5[..., CH_PROTEIN], axis=-1)
+    """Simple watershed."""
+    apc, brightfield, dapi, gfp, pe = np.split(img5, 5, axis=-1)
+    signal = apc + dapi + gfp + pe
     smoothed = gaussian_filter(signal.astype(np.float64), sigma=1)
     binary = smoothed > np.percentile(smoothed, threshold_pct)
     dt = distance_transform_edt(binary)
@@ -415,48 +410,85 @@ def extract_features_batch(
     methods: list[str],
     imgs_raw: list[np.ndarray],
     paths: list[str],
+    feature_pool: ProcessPoolExecutor | None = None,
+    feature_chunk_size: int = 8,
 ) -> list[dict]:
     """Extract morphological + intensity + texture features per crop.
 
     Uses raw (unnormalized) images so intensity values are physically meaningful.
     """
+    jobs: list[FeatureJob] = list(zip(masks, methods, imgs_raw, paths))
+    if not jobs:
+        return []
+
+    if feature_pool is None:
+        records: list[dict] = []
+        for job in jobs:
+            rec = _extract_features_one(job)
+            if rec is not None:
+                records.append(rec)
+        return records
+
     records: list[dict] = []
-    for mask, method, img, path in zip(masks, methods, imgs_raw, paths):
-        cell_mask = keep_largest_object(mask)
-        if cell_mask is None:
-            continue
-
-        labeled, n = label(cell_mask)
-        if n == 0:
-            continue
-
-        props = regionprops_table(
-            labeled, properties=["area", "eccentricity", "major_axis_length"]
-        )
-        rec: dict = {
-            "ImageName": Path(path).name,
-            "ImagePath": path,
-            "SegmentationMethod": method,
-            "Cell_Area": np.sum(props["area"]),
-            "Cell_Eccentricity": np.sum(props["eccentricity"]),
-            "Cell_MajorAxisLength": np.sum(props["major_axis_length"]),
-        }
-
-        for ch_idx, ch_name in enumerate(CH_NAMES):
-            ch = img[..., ch_idx]
-
-            intensity = regionprops_table(
-                labeled, intensity_image=ch, properties=["mean_intensity"]
-            )
-            rec[f"CellMeanIntensity_{ch_name}"] = np.mean(
-                intensity["mean_intensity"]
-            )
-
-            _add_intensity_features(rec, cell_mask, ch, "Cells", ch_name)
-            _add_texture_features(rec, cell_mask, ch, "Cells", ch_name)
-
-        records.append(rec)
+    for chunk_records in feature_pool.map(
+        _extract_features_chunk,
+        _iter_chunks(jobs, feature_chunk_size),
+        chunksize=1,
+    ):
+        records.extend(chunk_records)
     return records
+
+
+def _extract_features_one(job: FeatureJob) -> dict | None:
+    mask, method, img, path = job
+    cell_mask = keep_largest_object(mask)
+    if cell_mask is None:
+        return None
+
+    labeled, n = label(cell_mask)
+    if n == 0:
+        return None
+
+    props = regionprops_table(
+        labeled, properties=["area", "eccentricity", "major_axis_length"]
+    )
+    rec: dict = {
+        "ImageName": Path(path).name,
+        "ImagePath": path,
+        "SegmentationMethod": method,
+        "Cell_Area": np.sum(props["area"]),
+        "Cell_Eccentricity": np.sum(props["eccentricity"]),
+        "Cell_MajorAxisLength": np.sum(props["major_axis_length"]),
+    }
+
+    for ch_idx, ch_name in enumerate(CH_NAMES):
+        ch = img[..., ch_idx]
+
+        intensity = regionprops_table(
+            labeled, intensity_image=ch, properties=["mean_intensity"]
+        )
+        rec[f"CellMeanIntensity_{ch_name}"] = np.mean(
+            intensity["mean_intensity"]
+        )
+
+        _add_intensity_features(rec, cell_mask, ch, "Cells", ch_name)
+        _add_texture_features(rec, cell_mask, ch, "Cells", ch_name)
+
+    return rec
+
+
+def _extract_features_chunk(jobs: list[FeatureJob]) -> list[dict]:
+    records: list[dict] = []
+    for job in jobs:
+        rec = _extract_features_one(job)
+        if rec is not None:
+            records.append(rec)
+    return records
+
+
+def _iter_chunks(items: list[FeatureJob], chunk_size: int):
+    for start in range(0, len(items), chunk_size):
+        yield items[start : start + chunk_size]
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +500,8 @@ def process_batch(
     paths: list[str],
     model: models.CellposeModel,
     io_workers: int = 8,
+    feature_pool: ProcessPoolExecutor | None = None,
+    feature_chunk_size: int = 8,
 ) -> list[dict]:
     """Full pipeline for one batch: load -> segment -> refine -> features."""
     imgs_raw, valid_paths = load_images(paths, n_workers=io_workers)
@@ -492,7 +526,14 @@ def process_batch(
     masks = [r[0] for r in refined]
     methods = [r[1] for r in refined]
 
-    return extract_features_batch(masks, methods, imgs_raw, valid_paths)
+    return extract_features_batch(
+        masks,
+        methods,
+        imgs_raw,
+        valid_paths,
+        feature_pool=feature_pool,
+        feature_chunk_size=feature_chunk_size,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -520,11 +561,30 @@ def main():
         "--io-workers", type=int, default=8,
         help="Threads for parallel TIFF loading (default: 8)",
     )
+    parser.add_argument(
+        "--feature-workers",
+        type=int,
+        default=max(1, min(16, (os.cpu_count() or 1) - 2)),
+        help=(
+            "Process workers for CPU feature extraction "
+            "(default: min(16, cpu_count-2); set 1 to disable)"
+        ),
+    )
+    parser.add_argument(
+        "--feature-chunk-size",
+        type=int,
+        default=8,
+        help="Images per process task for feature extraction (default: 8)",
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
     if not input_dir.is_dir():
         parser.error(f"Not a directory: {input_dir}")
+    if args.feature_workers < 1:
+        parser.error("--feature-workers must be >= 1")
+    if args.feature_chunk_size < 1:
+        parser.error("--feature-chunk-size must be >= 1")
 
     output_path = Path(args.output) if args.output else Path("features.csv")
 
@@ -546,22 +606,39 @@ def main():
         "Found %d images in %s, processing in batches of %d",
         len(all_paths), input_dir, args.batch_size,
     )
+    if args.feature_workers > 1:
+        logger.info(
+            "Parallel feature extraction enabled: workers=%d, chunk=%d",
+            args.feature_workers, args.feature_chunk_size,
+        )
+    else:
+        logger.info("Parallel feature extraction disabled (--feature-workers <= 1)")
 
     model = models.CellposeModel(gpu=True)
 
     all_records: list[dict] = []
     n_batches = (len(all_paths) + args.batch_size - 1) // args.batch_size
-    for start in tqdm(
-        range(0, len(all_paths), args.batch_size), total=n_batches, desc="Batches"
-    ):
-        batch_paths = all_paths[start : start + args.batch_size]
-        try:
-            records = process_batch(
-                batch_paths, model, io_workers=args.io_workers
-            )
-            all_records.extend(records)
-        except Exception:
-            logger.exception("Failed batch starting at index %d", start)
+    pool_ctx = (
+        ProcessPoolExecutor(max_workers=args.feature_workers)
+        if args.feature_workers > 1
+        else nullcontext(None)
+    )
+    with pool_ctx as feature_pool:
+        for start in tqdm(
+            range(0, len(all_paths), args.batch_size), total=n_batches, desc="Batches"
+        ):
+            batch_paths = all_paths[start : start + args.batch_size]
+            try:
+                records = process_batch(
+                    batch_paths,
+                    model,
+                    io_workers=args.io_workers,
+                    feature_pool=feature_pool,
+                    feature_chunk_size=args.feature_chunk_size,
+                )
+                all_records.extend(records)
+            except Exception:
+                logger.exception("Failed batch starting at index %d", start)
 
     features_df = pd.DataFrame(all_records)
     features_df.to_csv(output_path, index=False)
