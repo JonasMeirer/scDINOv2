@@ -11,5 +11,6 @@ wheels/
 
 feature_extraction/*
 outputs/*
+scratch/*
 
 TODO.md
