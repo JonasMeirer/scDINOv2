@@ -1,7 +1,6 @@
 from typing import Optional
 
-import torch
-from torch import Tensor, nn
+from torch import Tensor
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 
