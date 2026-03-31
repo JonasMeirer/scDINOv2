@@ -1,10 +1,11 @@
 defaults:
   - datamodule: chronotype
-  - model: pretrained/dinov2-large #dinov3-vitb16
+  - model: dinov2 #pretrained/dinov2-large #dinov3-vitb16
   - _self_
 
 mode: "inference" # needed for the transformation
 max_batches: 100 # limit processed batches
+local_model_path: /home/jonas/Documents/Projects/active/scDINO/outputs/train/dinov2_chronotype/2026-03-31/10-03-01/hf_model # set to local HuggingFace model dir for scdino models, e.g. "outputs/train/.../hf_model", or null
 
 # Hardware configuration
 datamodule:

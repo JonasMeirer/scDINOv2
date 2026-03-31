@@ -10,6 +10,7 @@ import lightning as L
 
 from src.scdino.models.backbones.dinov2 import DINOv2 as DINOv2Skeleton
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
+from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
 from src.scdino.models.lightning.utils import (
     DINOLoss,
     IBOTPatchLoss,
@@ -103,6 +104,26 @@ class DINOv2(L.LightningModule):
             embeds = self.teacher_backbone.encode(x)[:, 0]
         self.teacher_backbone.train()
         return embeds
+
+    def save_pretrained(self, save_directory: str, **kwargs) -> None:
+        """Export the teacher backbone as a HuggingFace model."""
+        vit_cfg = dict(self.backbone_config.get("vit", {}))
+
+        config = ScDINOConfig(
+            model_variant="dinov2",
+            backbone_type="vit",
+            in_chans=vit_cfg.get("in_chans", 5),
+            img_size=vit_cfg.get("img_size", 56),
+            patch_size=vit_cfg.get("patch_size", 4),
+            embed_dim=vit_cfg.get("embed_dim", 64),
+            depth=vit_cfg.get("depth", 12),
+            num_heads=vit_cfg.get("num_heads", 8),
+            mlp_ratio=vit_cfg.get("mlp_ratio", 4.0),
+            reg_tokens=vit_cfg.get("reg_tokens", 0),
+        )
+        hf_model = ScDINOModel(config)
+        hf_model.backbone.load_state_dict(self.teacher_backbone.state_dict())
+        hf_model.save_pretrained(save_directory, **kwargs)
 
     def forward_teacher(self, x: Tensor) -> tuple[Tensor, Tensor]:
         features = self.teacher_backbone.encode(x)

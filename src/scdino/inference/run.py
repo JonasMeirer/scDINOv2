@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 from transformers import AutoModel
 
+from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
 
@@ -27,11 +28,11 @@ def run_inference(cfg: DictConfig):
         if torch.cuda.is_available() and cfg.datamodule.loader.accelerator == "gpu"
         else "cpu"
     )
-    model = AutoModel.from_pretrained(cfg.model.name).to(device)
-    model.eval()
+    model_id = cfg.local_model_path if cfg.get("local_model_path") else cfg.model.name
 
-    if cfg.model.name.startswith("facebook/dinov3"):
-        # modify the patch embeddings to the correct number of input channels
+    if model_id.startswith("facebook/dinov3"):
+        model = AutoModel.from_pretrained(model_id).to(device)
+        model.eval()
         model.embeddings.patch_embeddings = conv_mod(
             model.embeddings.patch_embeddings, cfg.datamodule.loader.num_channels
         )
@@ -39,7 +40,9 @@ def run_inference(cfg: DictConfig):
         def extract_embeddings(model_output):
             return model_output.pooler_output
 
-    elif cfg.model.name.startswith("facebook/dinov2"):
+    elif model_id.startswith("facebook/dinov2"):
+        model = AutoModel.from_pretrained(model_id).to(device)
+        model.eval()
         model.embeddings.patch_embeddings.projection = conv_mod(
             model.embeddings.patch_embeddings.projection,
             cfg.datamodule.loader.num_channels,
@@ -50,7 +53,11 @@ def run_inference(cfg: DictConfig):
             return model_output.pooler_output
 
     else:
-        raise ValueError(f"Model {cfg.model.name} not supported")
+        model = ScDINOModel.from_pretrained(model_id).to(device)
+        model.eval()
+
+        def extract_embeddings(model_output):
+            return model_output.pooler_output
 
     train_features = []
     train_labels = []

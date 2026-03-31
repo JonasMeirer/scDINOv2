@@ -14,6 +14,9 @@ def main(cfg: DictConfig) -> None:
     # Let's go
     trainer.fit(model=model, datamodule=datamodule)
 
+    # Export teacher backbone in HuggingFace format
+    model.save_pretrained("hf_model")
+
 
 if __name__ == "__main__":
     main()

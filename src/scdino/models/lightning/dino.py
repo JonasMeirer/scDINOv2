@@ -11,6 +11,7 @@ import lightning as L
 from src.scdino.models.backbones.dino import DINO as DINOSkeleton
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
 from src.scdino.models.lightning.utils import DINOLoss, update_momentum, cosine_schedule
+from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
 
 
 class DINO(L.LightningModule):
@@ -81,6 +82,30 @@ class DINO(L.LightningModule):
             embeds = self.teacher_backbone(x).flatten(start_dim=1)
         self.teacher_backbone.train()
         return embeds
+
+    def save_pretrained(self, save_directory: str, **kwargs) -> None:
+        """Export the teacher backbone as a HuggingFace model."""
+        backbone_type = self.backbone_config["type"]
+        vit_cfg = self.backbone_config.get("vit", {})
+        resnet_cfg = self.backbone_config.get("resnet", {})
+        params = dict(vit_cfg) if backbone_type == "vit" else dict(resnet_cfg)
+
+        config = ScDINOConfig(
+            model_variant="dino",
+            backbone_type=backbone_type,
+            in_chans=params.get("in_chans", 5),
+            img_size=params.get("img_size", 56),
+            patch_size=params.get("patch_size", 4),
+            embed_dim=params.get("embed_dim", 64),
+            depth=params.get("depth", 12),
+            num_heads=params.get("num_heads", 8),
+            mlp_ratio=params.get("mlp_ratio", 4.0),
+            reg_tokens=params.get("reg_tokens", 0),
+            stem_width=params.get("stem_width", 32),
+        )
+        hf_model = ScDINOModel(config)
+        hf_model.backbone.load_state_dict(self.teacher_backbone.state_dict())
+        hf_model.save_pretrained(save_directory, **kwargs)
 
     def forward_teacher(self, x: Tensor) -> Tensor:
         """Forward pass through teacher model."""
