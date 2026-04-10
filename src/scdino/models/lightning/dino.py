@@ -224,18 +224,30 @@ class DINO(L.LightningModule):
 
         return {"features": features, "labels": labels}
 
-    def on_validation_epoch_start(self):
+    @staticmethod
+    def _get_transformable_dataset(dataset):
+        """Unwrap Subset to get the underlying dataset that holds .transform."""
+        from torch.utils.data import Subset
 
-        if not self.enable_knn_eval or self.trainer.train_dataloader is None:
+        while isinstance(dataset, Subset):
+            dataset = dataset.dataset
+        return dataset
+
+    def on_validation_epoch_start(self):
+        if self.trainer.sanity_checking:
             return
 
-        # temporarily disable the DINO transform
-        train_dataset = self.trainer.train_dataloader.dataset
-        train_transform = deepcopy(train_dataset.transform)  # save for later
-        train_dataset.transform = self.trainer.datamodule.norm_only_transform
+        if not self.enable_knn_eval:
+            return
 
-        # Get training dataloader
         train_dl = self.trainer.train_dataloader
+        if train_dl is None:
+            train_dl = self.trainer.datamodule.train_dataloader(shuffle=False)
+
+        # temporarily disable the DINO transform
+        train_dataset = self._get_transformable_dataset(train_dl.dataset)
+        train_transform = deepcopy(train_dataset.transform)
+        train_dataset.transform = self.trainer.datamodule.norm_only_transform
 
         # Sample a subset of training data (to avoid memory issues)
         if self.knn_max_train_batches is None:
@@ -252,7 +264,7 @@ class DINO(L.LightningModule):
                 if i >= max_batches:
                     break
 
-                images, labels = batch  # no transform here, so it's the original image
+                images, labels = batch
                 images = images.to(self.device)
 
                 # Extract features using teacher backbone

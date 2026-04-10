@@ -1,0 +1,22 @@
+# @package _global_
+# Ablation: all augmentations disabled (only random crops + normalize).
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+datamodule:
+  transforms:
+    hf_prob: 0.0
+    vf_prob: 0.0
+    rr_prob: 0.0
+    intensity_scale_prob: 0.0
+    gaussian_noise_prob: 0.0
+    random_channel_drop_prob: 0.0
+    gaussian_blur: [0.0, 0.0, 0.0]
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/augmentation
+    subdir: minimal_seed${seed}

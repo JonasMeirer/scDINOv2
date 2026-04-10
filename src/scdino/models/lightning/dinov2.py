@@ -186,10 +186,8 @@ class DINOv2(L.LightningModule):
         teacher_temp_config = self.training_config["teacher_temp"]
         teacher_temp = linear_warmup_schedule(
             step=self.trainer.global_step,
-            warmup_steps=int(
+            warmup_steps=self._epoch_warmup_to_steps(
                 teacher_temp_config["warmup_steps"]
-                / self.trainer.max_epochs
-                * self.trainer.estimated_stepping_batches
             ),
             start_value=teacher_temp_config["start_value"],
             end_value=teacher_temp_config["end_value"],
@@ -324,18 +322,34 @@ class DINOv2(L.LightningModule):
 
         return {"features": cls_tokens, "labels": labels}
 
-    def on_validation_epoch_start(self):
+    def _epoch_warmup_to_steps(self, warmup_epochs: int) -> int:
+        """Convert an epoch-based warmup count to training steps."""
+        return int(warmup_epochs * len(self.trainer.train_dataloader))
 
-        if not self.enable_knn_eval or self.trainer.train_dataloader is None:
+    @staticmethod
+    def _get_transformable_dataset(dataset):
+        """Unwrap Subset to get the underlying dataset that holds .transform."""
+        from torch.utils.data import Subset
+
+        while isinstance(dataset, Subset):
+            dataset = dataset.dataset
+        return dataset
+
+    def on_validation_epoch_start(self):
+        if self.trainer.sanity_checking:
             return
 
-        # temporarily disable the DINO transform
-        train_dataset = self.trainer.train_dataloader.dataset
-        train_transform = deepcopy(train_dataset.transform)  # save for later
-        train_dataset.transform = self.trainer.datamodule.norm_only_transform
+        if not self.enable_knn_eval:
+            return
 
-        # Get training dataloader
         train_dl = self.trainer.train_dataloader
+        if train_dl is None:
+            train_dl = self.trainer.datamodule.train_dataloader(shuffle=False)
+
+        # temporarily disable the DINO transform
+        train_dataset = self._get_transformable_dataset(train_dl.dataset)
+        train_transform = deepcopy(train_dataset.transform)
+        train_dataset.transform = self.trainer.datamodule.norm_only_transform
 
         # Sample a subset of training data (to avoid memory issues)
         if self.knn_max_train_batches is None:
@@ -352,7 +366,7 @@ class DINOv2(L.LightningModule):
                 if i >= max_batches:
                     break
 
-                images, labels = batch  # no transform here, so it's the original image
+                images, labels = batch
                 images = images.to(self.device)
 
                 # Extract features using teacher backbone

@@ -1,0 +1,16 @@
+# @package _global_
+# Ablation: disable Gaussian blur on all views.
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+datamodule:
+  transforms:
+    gaussian_blur: [0.0, 0.0, 0.0]
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/augmentation
+    subdir: no_blur_seed${seed}

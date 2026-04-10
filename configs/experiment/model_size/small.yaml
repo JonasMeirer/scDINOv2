@@ -1,0 +1,14 @@
+# @package _global_
+# Model size benchmark: small ViT (embed_dim=256, depth=12, num_heads=8).
+# This matches the current default dinov2 config.
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/model_size
+    subdir: small_seed${seed}

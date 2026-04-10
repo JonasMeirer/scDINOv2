@@ -21,6 +21,8 @@ dependencies = [
   "seaborn>=0.13.2",
   "mlflow>=1.27.0",
   "timm>=1.0.26",
+  "hydra-submitit-launcher>=1.2.0",
+  "hydra-joblib-launcher>=1.2.0",
 ]
 
 [tool.uv.sources]

@@ -6,7 +6,9 @@ defaults:
   - _self_
 
 mode: "train"
+seed: 42
 max_batches: 1000 # for debugging, leave blank for full training
+eval_only_at_end: false
 
 hardware:
   accelerator: "gpu"

@@ -14,6 +14,12 @@ paths:
   predict_dir: ["${oc.env:DATA_DIR}/val"] # string or list of strings
 
 loader:
+  batch_size: 64
+  shuffle: true
+  drop_last: true
+  num_workers: 24
+  prefetch_factor: 2
+  pin_memory: true
   num_channels: 5
   norm_type: "clip_max" # "robust" , "robust_2", "clip_max"
   norm_dict:
@@ -30,5 +36,5 @@ loader:
       mean: [341.3947, 961.2514, 707.2337, 231.5772, 278.2134]
       std: [433.8531,  155.0544, 1155.2095,  192.4057,  290.8554]
   max_vals_clip: [2000, 1300, 6000, 1000, 2500]
+  max_train_samples: null
 
-  

@@ -1,0 +1,26 @@
+# @package _global_
+# Model size benchmark: large ViT (embed_dim=512, depth=16, num_heads=16).
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+model:
+  architecture:
+    backbone:
+      vit:
+        embed_dim: 512
+        depth: 16
+        num_heads: 16
+    dino_head:
+      embed_dim: 512
+      hidden_dim: 1024
+    ibot_head:
+      embed_dim: 512
+      hidden_dim: 1024
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/model_size
+    subdir: large_seed${seed}

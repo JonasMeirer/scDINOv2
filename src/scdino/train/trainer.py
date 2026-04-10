@@ -6,12 +6,14 @@ from omegaconf import DictConfig
 class HydraTrainer(L.Trainer):
     def __init__(
         self,
-        max_epochs: int,
+        max_epochs: int | None,
         devices: int | str | list[int],
         hardware_accelerator: str,
-        check_val_every_n_epoch: int = 1,
+        check_val_every_n_epoch: int | None = 1,
         log_every_n_steps: int = 50,
         limit_train_batches: int | float | None = None,
+        max_steps: int = -1,
+        val_check_interval: int | float | None = None,
         ckpt_every_n_epochs: int | None = None,
         default_root_dir: str | None = None,
         logging: DictConfig | None = None,
@@ -22,6 +24,7 @@ class HydraTrainer(L.Trainer):
 
         trainer_kwargs = {
             "max_epochs": max_epochs,
+            "max_steps": max_steps,
             "devices": devices,
             "accelerator": accelerator,
             "check_val_every_n_epoch": check_val_every_n_epoch,
@@ -29,6 +32,8 @@ class HydraTrainer(L.Trainer):
             "limit_train_batches": limit_train_batches,
             "default_root_dir": default_root_dir,
         }
+        if val_check_interval is not None:
+            trainer_kwargs["val_check_interval"] = val_check_interval
 
         if logger is not None:
             trainer_kwargs["logger"] = logger

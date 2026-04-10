@@ -1,0 +1,17 @@
+# @package _global_
+# Ablation: disable horizontal and vertical flips.
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+datamodule:
+  transforms:
+    hf_prob: 0.0
+    vf_prob: 0.0
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/augmentation
+    subdir: no_flip_seed${seed}

@@ -1,0 +1,37 @@
+# @package _global_
+# Scaling law benchmark: vary datamodule.loader.max_train_samples on the CLI.
+#
+# Uses a fixed number of gradient steps across all dataset sizes so that
+# compute budget is held constant.  Smaller datasets cycle through their
+# data more times; larger datasets see fewer epochs.
+#
+# The default max_steps (31250) is equivalent to 20 epochs on ~50k samples
+# with batch_size 32.  Adjust to match your full dataset size:
+#   max_steps = ceil(full_dataset_size / batch_size) * desired_epochs
+#
+# val_check_interval runs validation every N training steps (instead of
+# per-epoch, which would be too frequent for small datasets).
+#
+# Usage:
+#   python -m src.scdino.train.run --multirun \
+#     +experiment=scaling \
+#     datamodule.loader.max_train_samples=100,500,1000,5000,10000,50000 \
+#     seed=42,43,44
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+
+eval_only_at_end: true
+
+trainer:
+  max_epochs: -1
+  max_steps: 31250
+  log_every_n_steps: 10
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/scaling
+    subdir: n${datamodule.loader.max_train_samples}_seed${seed}

@@ -3,7 +3,7 @@ import lightning as L
 import torch
 import torchvision.transforms as T
 from torchvision.datasets import DatasetFolder
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 import tifffile
 import numpy as np
@@ -23,7 +23,8 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         self.test_dir = paths.get("test_dir", None)
         self.predict_dir = paths.get("predict_dir", None)
 
-        # Dtaloader
+        # Dataloader
+        self.max_train_samples = loader.get("max_train_samples", None)
         self.batch_size = loader.get("batch_size", 32)
         self.shuffle = loader.get("shuffle", True)
         self.drop_last = loader.get("drop_last", True)
@@ -58,6 +59,16 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
                 transform=self.train_transform,
                 target_transform=None,
             )
+
+            if (
+                self.max_train_samples is not None
+                and self.max_train_samples < len(self.train_dataset)
+            ):
+                gen = torch.Generator().manual_seed(42)
+                indices = torch.randperm(len(self.train_dataset), generator=gen)[
+                    : self.max_train_samples
+                ]
+                self.train_dataset = Subset(self.train_dataset, indices.tolist())
 
             self.val_dataset = DatasetFolder(
                 root=self.data_dir_val,
@@ -137,6 +148,15 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
                 transform=None,
                 target_transform=None,
             )
+        elif stage == "validate":
+            if not hasattr(self, "val_dataset"):
+                self.val_dataset = DatasetFolder(
+                    root=self.data_dir_val,
+                    loader=self.load_tiff,
+                    extensions=(".tiff",),
+                    transform=self.norm_only_transform,
+                    target_transform=None,
+                )
         else:
             raise ValueError(f"Invalid stage: {stage}")
 

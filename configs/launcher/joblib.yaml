@@ -1,0 +1,2 @@
+_target_: hydra_plugins.hydra_joblib_launcher.config.JobLibLauncherConf
+n_jobs: 2

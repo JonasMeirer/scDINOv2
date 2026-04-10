@@ -1,0 +1,16 @@
+# @package _global_
+# Ablation: disable random channel drop.
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+datamodule:
+  transforms:
+    random_channel_drop_prob: 0.0
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/augmentation
+    subdir: no_channel_drop_seed${seed}
