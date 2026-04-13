@@ -344,7 +344,7 @@ class DINOv2(L.LightningModule):
 
         train_dl = self.trainer.train_dataloader
         if train_dl is None:
-            train_dl = self.trainer.datamodule.train_dataloader(shuffle=False)
+            train_dl = self.trainer.datamodule.train_dataloader(shuffle=True)
 
         # temporarily disable the DINO transform
         train_dataset = self._get_transformable_dataset(train_dl.dataset)
