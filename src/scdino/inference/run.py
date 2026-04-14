@@ -5,6 +5,7 @@ from omegaconf import DictConfig
 from pathlib import Path
 import json
 from transformers import AutoModel
+import lightning as L
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
@@ -13,6 +14,7 @@ from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
 
 @hydra.main(config_path="../../../configs", config_name="inference.yaml")
 def run_inference(cfg: DictConfig):
+    L.seed_everything(cfg.seed, workers=True)
 
     # Load the dataset
     datamodule = hydra.utils.instantiate(cfg.datamodule)
