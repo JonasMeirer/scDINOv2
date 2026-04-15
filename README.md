@@ -1,6 +1,6 @@
 # scDINO
 
-Self-supervised representation learning for multi-channel microscopy images using DINO and DINOv2. Models are exported in HuggingFace format and evaluated via kNN classification.
+Self-supervised representation learning for multi-channel microscopy images using DINO, DINOv2 and DINOv3.
 
 ## Setup
 
