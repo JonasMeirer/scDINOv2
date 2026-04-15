@@ -169,11 +169,11 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
             pin_memory=self.pin_memory,
         )
 
-    def val_dataloader(self):
+    def val_dataloader(self, shuffle: bool = False):
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
-            shuffle=False,
+            shuffle=shuffle,
             drop_last=False,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,

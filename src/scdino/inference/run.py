@@ -22,9 +22,10 @@ def run_inference(cfg: DictConfig):
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     datamodule.setup("predict")
     train_loader = datamodule.train_dataloader()
-    val_loader = datamodule.val_dataloader()
+    val_loader = datamodule.val_dataloader(shuffle=True)
 
     max_train_batches = cfg.max_train_batches if cfg.max_train_batches is not None else len(train_loader)
+    max_val_batches = cfg.max_val_batches if cfg.max_val_batches is not None else len(val_loader)
 
     # Load the model
     device = torch.device(
@@ -91,7 +92,9 @@ def run_inference(cfg: DictConfig):
             train_features.append(embed(images.to(device)).detach().cpu())
             train_labels.append(labels)
 
-    for images, labels in tqdm(val_loader):
+    for i, (images, labels) in tqdm(enumerate(val_loader), total=max_val_batches):
+        if i >= max_val_batches:
+            break
         with torch.no_grad():
             test_features.append(embed(images.to(device)).detach().cpu())
             test_labels.append(labels)
