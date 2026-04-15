@@ -9,6 +9,7 @@ import lightning as L
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
+from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
 
 
@@ -31,31 +32,37 @@ def run_inference(cfg: DictConfig):
         else "cpu"
     )
     model_id = cfg.local_model_path if cfg.get("local_model_path") else cfg.model.name
+    flavor = cfg.get("channel_adaptation_flavor", "mean")
+    num_channels = cfg.datamodule.loader.num_channels
 
     if model_id.startswith("facebook/dinov3"):
         model = AutoModel.from_pretrained(model_id).to(device)
         model.eval()
-        model.embeddings.patch_embeddings = conv_mod(
-            model.embeddings.patch_embeddings,
-            cfg.datamodule.loader.num_channels,
-            flavor=cfg.get("conv_mod_flavor", "mean"),
-        )
 
         def extract_embeddings(model_output):
             return model_output.pooler_output
+
+        if flavor == "DINO4CELL":
+            model = PerChannelWrapper(model, extract_embeddings, num_channels)
+        else:
+            model.embeddings.patch_embeddings = conv_mod(
+                model.embeddings.patch_embeddings, num_channels, flavor=flavor,
+            )
 
     elif model_id.startswith("facebook/dinov2"):
         model = AutoModel.from_pretrained(model_id).to(device)
         model.eval()
-        model.embeddings.patch_embeddings.projection = conv_mod(
-            model.embeddings.patch_embeddings.projection,
-            cfg.datamodule.loader.num_channels,
-            flavor=cfg.get("conv_mod_flavor", "mean"),
-        )
-        model.embeddings.patch_embeddings.num_channels = 5
 
         def extract_embeddings(model_output):
             return model_output.pooler_output
+
+        if flavor == "DINO4CELL":
+            model = PerChannelWrapper(model, extract_embeddings, num_channels)
+        else:
+            model.embeddings.patch_embeddings.projection = conv_mod(
+                model.embeddings.patch_embeddings.projection, num_channels, flavor=flavor,
+            )
+            model.embeddings.patch_embeddings.num_channels = num_channels
 
     else:
         model = ScDINOModel.from_pretrained(model_id).to(device)
@@ -63,6 +70,13 @@ def run_inference(cfg: DictConfig):
 
         def extract_embeddings(model_output):
             return model_output.pooler_output
+
+    if isinstance(model, PerChannelWrapper):
+        def embed(images):
+            return model(images)
+    else:
+        def embed(images):
+            return extract_embeddings(model(images))
 
     train_features = []
     train_labels = []
@@ -72,16 +86,12 @@ def run_inference(cfg: DictConfig):
         if i >= cfg.max_batches:
             break
         with torch.no_grad():
-            train_features.append(
-                extract_embeddings(model(images.to(device))).detach().cpu()
-            )
+            train_features.append(embed(images.to(device)).detach().cpu())
             train_labels.append(labels)
 
     for images, labels in tqdm(val_loader):
         with torch.no_grad():
-            test_features.append(
-                extract_embeddings(model(images.to(device))).detach().cpu()
-            )
+            test_features.append(embed(images.to(device)).detach().cpu())
             test_labels.append(labels)
 
     train_features = torch.cat(train_features, dim=0)
