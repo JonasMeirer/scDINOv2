@@ -10,15 +10,15 @@ model:
   architecture:
     backbone:
       vit:
-        embed_dim: 128
+        embed_dim: 64
         depth: 6
         num_heads: 4
     dino_head:
-      embed_dim: 128
-      hidden_dim: 256
+      embed_dim: 64
+      hidden_dim: 128
     ibot_head:
-      embed_dim: 128
-      hidden_dim: 256
+      embed_dim: 64
+      hidden_dim: 128
 
 hydra:
   sweep:

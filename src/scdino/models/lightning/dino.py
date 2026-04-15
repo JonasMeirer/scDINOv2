@@ -28,8 +28,6 @@ class DINO(L.LightningModule):
         self.name = name
         self.backbone_config = architecture.backbone
         self.dino_head_config = architecture.dino_head
-        self.ibot_head_config = architecture.ibot_head
-        self.ibot_separate_head = architecture.ibot_separate_head
         self.knn_eval_config = training.knn_eval
         self.training_config = training
 
@@ -242,7 +240,7 @@ class DINO(L.LightningModule):
 
         train_dl = self.trainer.train_dataloader
         if train_dl is None:
-            train_dl = self.trainer.datamodule.train_dataloader(shuffle=False)
+            train_dl = self.trainer.datamodule.train_dataloader(shuffle=True)
 
         # temporarily disable the DINO transform
         train_dataset = self._get_transformable_dataset(train_dl.dataset)

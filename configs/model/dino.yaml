@@ -11,7 +11,7 @@ architecture:
       in_chans: 5
       img_size: 56
       patch_size: 4
-      embed_dim: 256
+      embed_dim: 128
       depth: 12
       num_heads: 8
       drop_path_rate: 0.1
@@ -23,20 +23,11 @@ architecture:
       stem_width: 32
   # DINO head parameters
   dino_head:
-    embed_dim: 256
-    hidden_dim: 512
+    embed_dim: 128
+    hidden_dim: 256
     bottleneck_dim: 32
     output_dim: 2048
     batch_norm: false
-  # IBOT head parameters
-  ibot_head:
-    embed_dim: 256
-    hidden_dim: 512
-    bottleneck_dim: 32
-    output_dim: 2048 # 16384 
-    batch_norm: false
-  # Model behavior
-  ibot_separate_head: false
   
 
 training:
@@ -69,17 +60,6 @@ training:
       center_momentum: 0.9
       center_mode: "mean"
       weight: 1.0
-    ibot:
-      output_dim: 2048
-      teacher_temp: 0.04
-      student_temp: 0.1
-      center_mode: "mean"
-      center_momentum: 0.9
-      weight: 1.0    
-    koleo:
-      p: 2
-      eps: 1e-8
-      weight: 0.1
   # kNN evaluation parameters
   knn_eval:
     enable_knn_eval: true

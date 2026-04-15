@@ -11,7 +11,7 @@ architecture:
       in_chans: 5
       img_size: 56
       patch_size: 4
-      embed_dim: 256
+      embed_dim: 128
       depth: 12
       num_heads: 8
       drop_path_rate: 0.1
@@ -19,15 +19,15 @@ architecture:
       reg_tokens: 8
   # DINO head parameters
   dino_head:
-    embed_dim: 256
-    hidden_dim: 512
+    embed_dim: 128
+    hidden_dim: 256
     bottleneck_dim: 32
     output_dim: 2048
     batch_norm: false
   # IBOT head parameters
   ibot_head:
-    embed_dim: 256
-    hidden_dim: 512
+    embed_dim: 128
+    hidden_dim: 256
     bottleneck_dim: 32
     output_dim: 2048 # 16384 
     batch_norm: false
