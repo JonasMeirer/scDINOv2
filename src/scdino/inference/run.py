@@ -36,7 +36,9 @@ def run_inference(cfg: DictConfig):
         model = AutoModel.from_pretrained(model_id).to(device)
         model.eval()
         model.embeddings.patch_embeddings = conv_mod(
-            model.embeddings.patch_embeddings, cfg.datamodule.loader.num_channels
+            model.embeddings.patch_embeddings,
+            cfg.datamodule.loader.num_channels,
+            flavor=cfg.get("conv_mod_flavor", "mean"),
         )
 
         def extract_embeddings(model_output):
@@ -48,6 +50,7 @@ def run_inference(cfg: DictConfig):
         model.embeddings.patch_embeddings.projection = conv_mod(
             model.embeddings.patch_embeddings.projection,
             cfg.datamodule.loader.num_channels,
+            flavor=cfg.get("conv_mod_flavor", "mean"),
         )
         model.embeddings.patch_embeddings.num_channels = 5
 

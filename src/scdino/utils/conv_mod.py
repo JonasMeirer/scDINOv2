@@ -1,9 +1,15 @@
 import torch
 import torch.nn as nn
 
+FLAVORS = ("mean", "pick_1", "pick_2", "pick_3")
 
-def conv_mod(old_conv, out_channels: int):
-    # create new conv with 5 input channels
+_PICK_INDEX = {"pick_1": 0, "pick_2": 1, "pick_3": 2}
+
+
+def conv_mod(old_conv, out_channels: int, flavor: str = "mean"):
+    if flavor not in FLAVORS:
+        raise ValueError(f"Unknown flavor {flavor!r}, expected one of {FLAVORS}")
+
     new_conv = nn.Conv2d(
         in_channels=out_channels,
         out_channels=old_conv.out_channels,
@@ -13,23 +19,21 @@ def conv_mod(old_conv, out_channels: int):
         bias=(old_conv.bias is not None),
     )
 
-    # ---- weight adaptation ----
     with torch.no_grad():
-        old_weight = old_conv.weight  # shape: (768, 3, 16, 16)
+        old_weight = old_conv.weight  # (out, 3, kH, kW)
 
-        # average over input channels
-        avg_weight = old_weight.mean(dim=1, keepdim=True)  # (768, 1, 16, 16)
+        if flavor == "mean":
+            seed_weight = old_weight.mean(dim=1, keepdim=True)
+        else:
+            idx = _PICK_INDEX[flavor]
+            seed_weight = old_weight[:, idx : idx + 1, :, :]
 
-        # repeat to 5 channels
-        new_weight = avg_weight.repeat(1, out_channels, 1, 1)  # (768, 5, 16, 16)
-
+        new_weight = seed_weight.repeat(1, out_channels, 1, 1)
         new_conv.weight.copy_(new_weight)
 
-        # copy bias if exists
         if old_conv.bias is not None:
             new_conv.bias.copy_(old_conv.bias)
 
-    # move new layer to same device and dtype as old layer
     new_conv = new_conv.to(device=old_conv.weight.device, dtype=old_conv.weight.dtype)
 
     return new_conv

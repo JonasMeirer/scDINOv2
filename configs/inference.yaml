@@ -7,6 +7,7 @@ mode: "inference" # needed for the transformation
 seed: 42
 max_batches: 1000 # limit processed batches
 local_model_path: /home/jonas/Documents/Projects/active/scDINO/outputs/train/dino_chronotype/2026-04-14/14-20-27/hf_model # set to local HuggingFace model dir for scdino models, e.g. "outputs/train/.../hf_model", or null
+conv_mod_flavor: "mean" # "mean", "pick_1", "pick_2", "pick_3", only used for pretrained models to adapt them to non 3 channel images
 
 # Hardware configuration
 datamodule:
