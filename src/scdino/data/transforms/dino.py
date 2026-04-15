@@ -4,6 +4,7 @@ import torch
 from torch import Tensor
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
+import math
 
 
 class MultiViewTransform:
@@ -124,69 +125,62 @@ class DINOTransform(MultiViewTransform):
         rr_degrees = cfg.get("rr_degrees", 90)
         intensity_scale_range = cfg.get("intensity_scale_range", (0.5, 1.5))
         intensity_scale_prob = cfg.get("intensity_scale_prob", 0.8)
+        intensity_shift_range = cfg.get("intensity_shift_range", (-0.1, 0.1))
+        intensity_shift_prob = cfg.get("intensity_shift_prob", 0.5)
+        gamma_range = cfg.get("gamma_range", (0.7, 1.5))
+        gamma_prob = cfg.get("gamma_prob", 0.5)
         gaussian_noise_sigma = cfg.get("gaussian_noise_sigma", 0.02)
         gaussian_noise_prob = cfg.get("gaussian_noise_prob", 0.8)
         random_channel_drop_prob = cfg.get("random_channel_drop_prob", 0.3)
+        cutout_prob = cfg.get("cutout_prob", 0.0)
+        cutout_scale = cfg.get("cutout_scale", (0.02, 0.1))
+        cutout_ratio = cfg.get("cutout_ratio", (0.3, 3.3))
         gaussian_blur = cfg.get("gaussian_blur", (1.0, 0.1, 0.5))
         kernel_size = cfg.get("kernel_size", 9)
         sigmas = cfg.get("sigmas", (0.1, 2))
         normalize = cfg.get("normalize")
 
-        # first global crop
+        shared_kwargs = dict(
+            hf_prob=hf_prob,
+            vf_prob=vf_prob,
+            rr_prob=rr_prob,
+            rr_degrees=rr_degrees,
+            intensity_scale_range=intensity_scale_range,
+            intensity_scale_prob=intensity_scale_prob,
+            intensity_shift_range=intensity_shift_range,
+            intensity_shift_prob=intensity_shift_prob,
+            gamma_range=gamma_range,
+            gamma_prob=gamma_prob,
+            gaussian_noise_sigma=gaussian_noise_sigma,
+            gaussian_noise_prob=gaussian_noise_prob,
+            random_channel_drop_prob=random_channel_drop_prob,
+            cutout_prob=cutout_prob,
+            cutout_scale=cutout_scale,
+            cutout_ratio=cutout_ratio,
+            kernel_size=kernel_size,
+            sigmas=sigmas,
+            normalize=normalize,
+        )
+
         global_transform_0 = DINOViewTransform(
             crop_size=global_crop_size,
             crop_scale=global_crop_scale,
-            hf_prob=hf_prob,
-            vf_prob=vf_prob,
-            rr_prob=rr_prob,
-            rr_degrees=rr_degrees,
-            intensity_scale_range=intensity_scale_range,
-            intensity_scale_prob=intensity_scale_prob,
-            gaussian_noise_sigma=gaussian_noise_sigma,
-            gaussian_noise_prob=gaussian_noise_prob,
-            random_channel_drop_prob=random_channel_drop_prob,
             gaussian_blur=gaussian_blur[0],
-            kernel_size=kernel_size,
-            sigmas=sigmas,
-            normalize=normalize,
+            **shared_kwargs,
         )
 
-        # second global crop
         global_transform_1 = DINOViewTransform(
             crop_size=global_crop_size,
             crop_scale=global_crop_scale,
-            hf_prob=hf_prob,
-            vf_prob=vf_prob,
-            rr_prob=rr_prob,
-            rr_degrees=rr_degrees,
-            intensity_scale_range=intensity_scale_range,
-            intensity_scale_prob=intensity_scale_prob,
-            gaussian_noise_sigma=gaussian_noise_sigma,
-            gaussian_noise_prob=gaussian_noise_prob,
-            random_channel_drop_prob=random_channel_drop_prob,
             gaussian_blur=gaussian_blur[1],
-            kernel_size=kernel_size,
-            sigmas=sigmas,
-            normalize=normalize,
+            **shared_kwargs,
         )
 
-        # transformation for the local small crops
         local_transform = DINOViewTransform(
             crop_size=local_crop_size,
             crop_scale=local_crop_scale,
-            hf_prob=hf_prob,
-            vf_prob=vf_prob,
-            rr_prob=rr_prob,
-            rr_degrees=rr_degrees,
-            intensity_scale_range=intensity_scale_range,
-            intensity_scale_prob=intensity_scale_prob,
-            gaussian_noise_sigma=gaussian_noise_sigma,
-            gaussian_noise_prob=gaussian_noise_prob,
-            random_channel_drop_prob=random_channel_drop_prob,
             gaussian_blur=gaussian_blur[2],
-            kernel_size=kernel_size,
-            sigmas=sigmas,
-            normalize=normalize,
+            **shared_kwargs,
         )
         local_transforms = [local_transform] * n_local_views
         transforms = [global_transform_0, global_transform_1]
@@ -205,16 +199,28 @@ class DINOViewTransform:
         rr_degrees: Optional[float] = 90,
         intensity_scale_range: Tuple[float, float] = (0.5, 1.5),
         intensity_scale_prob: float = 0.8,
+        intensity_shift_range: Tuple[float, float] = (-0.1, 0.1),
+        intensity_shift_prob: float = 0.5,
+        gamma_range: Tuple[float, float] = (0.7, 1.5),
+        gamma_prob: float = 0.5,
         gaussian_noise_sigma: float = 0.02,
         gaussian_noise_prob: float = 0.8,
         random_channel_drop_prob: float = 0.3,
+        cutout_prob: float = 0.0,
+        cutout_scale: Tuple[float, float] = (0.02, 0.1),
+        cutout_ratio: Tuple[float, float] = (0.3, 3.3),
         gaussian_blur: float = 1.0,
         kernel_size: Optional[float] = 9,
         sigmas: Tuple[float, float] = (0.1, 2),
         normalize: Union[None, Dict[str, List[float]]] = None,
     ):
 
-        transform = [
+        transform = []
+
+        if normalize:
+            transform.append(T.Normalize(mean=normalize["mean"], std=normalize["std"]))
+
+        transform += [
             T.RandomResizedCrop(
                 size=crop_size,
                 scale=crop_scale,
@@ -230,6 +236,14 @@ class DINOViewTransform:
                 p=intensity_scale_prob,
             ),
             T.RandomApply(
+                [RandomChannelIntensityShift(shift_range=intensity_shift_range)],
+                p=intensity_shift_prob,
+            ),
+            T.RandomApply(
+                [RandomChannelGamma(gamma_range=gamma_range)],
+                p=gamma_prob,
+            ),
+            T.RandomApply(
                 [AddGaussianNoise(sigma=gaussian_noise_sigma)], p=gaussian_noise_prob
             ),
             T.RandomApply([RandomChannelDrop()], p=random_channel_drop_prob),
@@ -238,8 +252,11 @@ class DINOViewTransform:
             ),
         ]
 
-        if normalize:
-            transform += [T.Normalize(mean=normalize["mean"], std=normalize["std"])]
+        if cutout_prob > 0:
+            transform.append(
+                T.RandomErasing(p=cutout_prob, scale=cutout_scale, ratio=cutout_ratio, value=0)
+            )
+
         self.transform = T.Compose(transform)
 
     def __call__(self, image: Tensor) -> Tensor:
@@ -269,24 +286,50 @@ class RandomChannelIntensityScale:
         return x * scales[:, None, None]
 
 
+class RandomChannelIntensityShift:
+    """Adds a random per-channel offset to simulate background fluorescence variation."""
+
+    def __init__(self, shift_range=(-0.1, 0.1)):
+        self.shift_range = shift_range
+
+    def __call__(self, x):
+        shifts = torch.empty(x.size(0)).uniform_(*self.shift_range)
+        return x + shifts[:, None, None]
+
+
+class RandomChannelGamma:
+    """Per-channel gamma correction on non-negative data.
+
+    Applies x_ch^gamma with a different random gamma per channel.
+    Negative values are preserved by applying gamma to the absolute value
+    and restoring the sign, so this is safe for data centered around zero.
+    """
+
+    def __init__(self, gamma_range=(0.7, 1.5)):
+        self.log_gamma_lo = math.log(gamma_range[0])
+        self.log_gamma_hi = math.log(gamma_range[1])
+
+    def __call__(self, x):
+        log_gammas = torch.empty(x.size(0)).uniform_(self.log_gamma_lo, self.log_gamma_hi)
+        gammas = log_gammas.exp()[:, None, None]
+        return x.sign() * x.abs().pow(gammas)
+
+
 class AddGaussianNoise:
-    """Adds mixed Gaussian."""
+    """Adds i.i.d. Gaussian noise."""
 
     def __init__(self, sigma=0.01):
         self.sigma = sigma
 
     def __call__(self, x):
-        gauss = torch.randn_like(x) * self.sigma
-        return x + gauss
+        return x + torch.randn_like(x) * self.sigma
 
 
 class RandomChannelDrop:
-    """Randomly drop or zero one fluorescence channel."""
-
-    def __init__(self):
-        pass
+    """Zeros out one randomly chosen fluorescence channel."""
 
     def __call__(self, x):
         idx = torch.randint(0, x.size(0), (1,))
-        x[idx] = 0
-        return x
+        out = x.clone()
+        out[idx] = 0
+        return out

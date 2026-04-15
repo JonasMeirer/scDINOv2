@@ -12,8 +12,11 @@ datamodule:
     vf_prob: 0.0
     rr_prob: 0.0
     intensity_scale_prob: 0.0
+    intensity_shift_prob: 0.0
+    gamma_prob: 0.0
     gaussian_noise_prob: 0.0
     random_channel_drop_prob: 0.0
+    cutout_prob: 0.0
     gaussian_blur: [0.0, 0.0, 0.0]
 
 hydra:

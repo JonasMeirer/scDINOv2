@@ -9,9 +9,16 @@ rr_prob: 0.5
 rr_degrees: 90
 intensity_scale_range: [0.8, 1.2]
 intensity_scale_prob: 0.8
-gaussian_noise_sigma: 0.5
-gaussian_noise_prob: 0.8
-random_channel_drop_prob: 0.8
+intensity_shift_range: [-0.05, 0.05]
+intensity_shift_prob: 0.5
+gamma_range: [0.7, 1.5]
+gamma_prob: 0.5
+gaussian_noise_sigma: 0.03
+gaussian_noise_prob: 0.5
+random_channel_drop_prob: 0.3
+cutout_prob: 0.0
+cutout_scale: [0.02, 0.1]
+cutout_ratio: [0.3, 3.3]
 gaussian_blur: [1.0, 0.1, 0.5]
 kernel_size: 9
 sigmas: [0.1, 2]
