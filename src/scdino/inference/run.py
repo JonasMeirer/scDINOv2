@@ -24,7 +24,7 @@ def run_inference(cfg: DictConfig):
     train_loader = datamodule.train_dataloader()
     val_loader = datamodule.val_dataloader()
 
-    max_batches = cfg.max_batches if cfg.max_batches is not None else len(train_loader)
+    max_train_batches = cfg.max_train_batches if cfg.max_train_batches is not None else len(train_loader)
 
     # Load the model
     device = torch.device(
@@ -34,6 +34,7 @@ def run_inference(cfg: DictConfig):
     )
     model_id = cfg.local_model_path if cfg.get("local_model_path") else cfg.model.name
     flavor = cfg.get("channel_adaptation_flavor", "mean")
+    print(f"Using channel adaptation flavor: {flavor}")
     num_channels = cfg.datamodule.loader.num_channels
 
     if model_id.startswith("facebook/dinov3"):
@@ -83,8 +84,8 @@ def run_inference(cfg: DictConfig):
     train_labels = []
     test_features = []
     test_labels = []
-    for i, (images, labels) in tqdm(enumerate(train_loader), total=max_batches):
-        if i >= cfg.max_batches:
+    for i, (images, labels) in tqdm(enumerate(train_loader), total=max_train_batches):
+        if i >= max_train_batches:
             break
         with torch.no_grad():
             train_features.append(embed(images.to(device)).detach().cpu())
@@ -124,7 +125,7 @@ def run_inference(cfg: DictConfig):
                                  test_labels.cpu().numpy(), 
                                  sample_size=min(10_000, len(test_features.cpu().numpy())), 
                                  random_state=42)
-    print(f"Silhouette score: {results["silhouette"]:.4f}")
+    print(f"Silhouette score: {results['silhouette']:.4f}")
 
     # Get output directory
     out_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir

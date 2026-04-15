@@ -35,8 +35,8 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         # TRANSFORMS
         self.norm_type = loader.get("norm_type", "robust")
         self.max_vals_clip = loader.get("max_vals_clip", None)
-        mean_raw = loader.norm_dict.get("raw").get("mean")
-        std_raw = loader.norm_dict.get("raw").get("std")
+        #mean_raw = loader.norm_dict.get("raw").get("mean")
+        #std_raw = loader.norm_dict.get("raw").get("std")
         mean_norm = loader.norm_dict.get(self.norm_type).get("mean")
         std_norm = loader.norm_dict.get(self.norm_type).get("std")
         transforms.normalize = {"mean": mean_norm, "std": std_norm}  # needed for Trafo
@@ -45,7 +45,7 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         self.norm_only_transform = T.Compose(
             [
                 T.Lambda(lambda x: x[0] if isinstance(x, list) else x),
-                T.Normalize(mean=mean_raw, std=std_raw),
+                T.Normalize(mean=mean_norm, std=std_norm),
             ]
         )
 
@@ -223,6 +223,8 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
             img = normalize_numpy_robust_2(img)
         elif self.norm_type == "clip_max":
             img = self.clip(img)
+        elif self.norm_type == "identity":
+            pass
         else:
             raise ValueError(f"Invalid norm type: {self.norm_type}")
 
