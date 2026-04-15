@@ -217,9 +217,6 @@ class DINOViewTransform:
 
         transform = []
 
-        if normalize:
-            transform.append(T.Normalize(mean=normalize["mean"], std=normalize["std"]))
-
         transform += [
             T.RandomResizedCrop(
                 size=crop_size,
@@ -256,6 +253,9 @@ class DINOViewTransform:
             transform.append(
                 T.RandomErasing(p=cutout_prob, scale=cutout_scale, ratio=cutout_ratio, value=0)
             )
+            
+        if normalize:
+            transform.append(T.Normalize(mean=normalize["mean"], std=normalize["std"]))
 
         self.transform = T.Compose(transform)
 

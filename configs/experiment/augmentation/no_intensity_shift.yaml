@@ -1,0 +1,16 @@
+# @package _global_
+# Ablation: disable per-channel intensity shift.
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+datamodule:
+  transforms:
+    intensity_shift_prob: 0.0
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/augmentation
+    subdir: no_intensity_shift_seed${seed}
