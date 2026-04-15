@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 from tqdm import tqdm
 from copy import deepcopy
+from sklearn.metrics import silhouette_score
 
 import lightning as L
 
@@ -340,6 +341,39 @@ class DINO(L.LightningModule):
 
         except Exception as e:
             print(f"kNN evaluation failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            
+        # Silhouette score on validation embeddings
+        try:
+            val_features_np = val_features.cpu().numpy()
+            val_labels_np = val_labels.cpu().numpy()
+
+            n_unique = len(set(val_labels_np.tolist()))
+            if n_unique < 2:
+                print("Silhouette score requires >= 2 classes, skipping")
+            else:
+                sil_score = silhouette_score(
+                    val_features_np,
+                    val_labels_np,
+                    sample_size=min(10_000, len(val_features_np)),
+                    random_state=42,
+                )
+                self.log(
+                    "val/silhouette",
+                    sil_score,
+                    prog_bar=True,
+                    logger=True,
+                    sync_dist=True,
+                    on_epoch=True,
+                    on_step=False,
+                )
+                print(
+                    f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}"
+                )
+        except Exception as e:
+            print(f"Silhouette score computation failed: {e}")
             import traceback
 
             traceback.print_exc()

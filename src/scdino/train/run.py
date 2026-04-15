@@ -35,7 +35,7 @@ def main(cfg: DictConfig) -> None:
     train_samples = len(datamodule.train_dataset)
 
     metrics = {}
-    for key in ["val/knn_top1", "val/knn_top5"]:
+    for key in ["val/knn_top1", "val/knn_top5", "val/silhouette"]:
         val = trainer.callback_metrics.get(key)
         metrics[key.replace("/", "_")] = float(val) if val is not None else None
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 from transformers import AutoModel
 import lightning as L
+from sklearn.metrics import silhouette_score
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
@@ -118,6 +119,12 @@ def run_inference(cfg: DictConfig):
 
     print(f"kNN top1 accuracy: {results['top1']:.2f}%")
     print(f"kNN top5 accuracy: {results['top5']:.2f}%")
+    
+    results["silhouette"] = silhouette_score(test_features.cpu().numpy(), 
+                                 test_labels.cpu().numpy(), 
+                                 sample_size=min(10_000, len(test_features.cpu().numpy())), 
+                                 random_state=42)
+    print(f"Silhouette score: {results["silhouette"]:.4f}")
 
     # Get output directory
     out_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
