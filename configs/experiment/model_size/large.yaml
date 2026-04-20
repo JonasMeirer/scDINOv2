@@ -11,7 +11,7 @@ model:
     backbone:
       vit:
         embed_dim: 512
-        depth: 16
+        depth: 12
         num_heads: 16
     dino_head:
       embed_dim: 512

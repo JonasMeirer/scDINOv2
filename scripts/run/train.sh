@@ -1,3 +1,3 @@
-export DATA_DIR=/mnt/SSD/Chronotype
+export DATA_DIR=/scratch/725-INTERNAL.CHRONOTYPE # /mnt/SSD/Chronotype
 
 python -m src.scdino.train.run

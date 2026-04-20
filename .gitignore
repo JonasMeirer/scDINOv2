@@ -12,5 +12,6 @@ wheels/
 feature_extraction/*
 outputs/*
 scratch/*
+multirun/*
 
 TODO.md

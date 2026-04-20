@@ -11,12 +11,13 @@ class PerChannelWrapper(nn.Module):
     Output dimension: num_channels × base_embedding_dim.
     """
 
-    def __init__(self, model: nn.Module, extract_fn: Callable, num_channels: int):
+    def __init__(self, model: nn.Module, extract_fn: Callable, num_channels: int, flavor="concat"):
         super().__init__()
         self.model = model
         self.extract_fn = extract_fn
         self.num_channels = num_channels
-
+        self.flavor = flavor
+        
     @torch.no_grad()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, H, W)
@@ -25,4 +26,9 @@ class PerChannelWrapper(nn.Module):
             rgb = x[:, c : c + 1, :, :].expand(-1, 3, -1, -1)  # (B, 3, H, W)
             emb = self.extract_fn(self.model(rgb))  # (B, D)
             parts.append(emb)
-        return torch.cat(parts, dim=1)  # (B, C*D)
+        if flavor == "concat":
+            return torch.cat(parts, dim=1) # (B, C*D)
+        elif flavor == "mean":
+            return torch.mean(parts, dim=0) # (B, D)
+        else:
+            raise ValueError(f"Unknown flavor {self.flavor!r}, expected one of {FLAVORS}")

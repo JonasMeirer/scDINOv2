@@ -45,8 +45,10 @@ def run_inference(cfg: DictConfig):
         def extract_embeddings(model_output):
             return model_output.pooler_output
 
-        if flavor == "DINO4CELL":
+        if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, extract_embeddings, num_channels)
+        elif flavor == "DINO4CELL_MEAN":
+            model = PerChannelWrapper(model, extract_embeddings, num_channels, flavor="mean")
         else:
             model.embeddings.patch_embeddings = conv_mod(
                 model.embeddings.patch_embeddings, num_channels, flavor=flavor,
@@ -59,8 +61,10 @@ def run_inference(cfg: DictConfig):
         def extract_embeddings(model_output):
             return model_output.pooler_output
 
-        if flavor == "DINO4CELL":
+        if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, extract_embeddings, num_channels)
+        elif flavor == "DINO4CELL_MEAN":
+            model = PerChannelWrapper(model, extract_embeddings, num_channels, flavor="mean")
         else:
             model.embeddings.patch_embeddings.projection = conv_mod(
                 model.embeddings.patch_embeddings.projection, num_channels, flavor=flavor,

@@ -18,12 +18,13 @@ from pathlib import Path
 import pandas as pd
 
 
-METRIC_COLS = ["val_knn_top1", "val_knn_top5"]
+METRIC_COLS = ["val_knn_top1", "val_knn_top5", "val_silhouette"]
 
 FLAT_KEYS = {
     "seed": lambda r: r.get("seed"),
     "val_knn_top1": lambda r: (r.get("metrics") or {}).get("val_knn_top1"),
     "val_knn_top5": lambda r: (r.get("metrics") or {}).get("val_knn_top5"),
+    "val_silhouette": lambda r: (r.get("metrics") or {}).get("val_silhouette"),
     "num_parameters": lambda r: (r.get("model") or {}).get("num_parameters"),
     "num_train_samples": lambda r: (r.get("data") or {}).get("num_train_samples"),
     "wall_time_seconds": lambda r: (r.get("runtime") or {}).get("wall_time_seconds"),
@@ -47,20 +48,11 @@ def load_results(root: Path) -> list[dict]:
     return rows
 
 
-def aggregate(df: pd.DataFrame) -> pd.DataFrame:
+def aggregate(df: pd.DataFrame, aggregate_column: str) -> pd.DataFrame:
     """Group by condition (everything except seed and metrics) and compute stats."""
-    group_cols = [
-        c for c in df.columns if c not in ["seed", "run_dir", *METRIC_COLS]
-    ]
-    # Drop columns that are all NaN (can't group on them usefully)
-    group_cols = [c for c in group_cols if df[c].notna().any()]
-
-    if not group_cols:
-        print("[WARN] No grouping columns found; skipping aggregation.")
-        return pd.DataFrame()
 
     agg_dict = {m: ["mean", "std", "count"] for m in METRIC_COLS if m in df.columns}
-    agg = df.groupby(group_cols, dropna=False).agg(agg_dict)
+    agg = df.groupby(aggregate_column, dropna=False).agg(agg_dict)
     agg.columns = [f"{col}_{stat}" for col, stat in agg.columns]
     first_count = next(
         (f"{m}_count" for m in METRIC_COLS if f"{m}_count" in agg.columns), None
@@ -100,8 +92,10 @@ def main() -> None:
     df.to_csv(summary_path, index=False)
     print(f"Wrote {len(df)} rows to {summary_path}\n")
     print(df.to_string(index=False))
+    
+    df["experiment"] = df["run_dir"].apply(lambda x: "_".join(x.split("/")[-1].split("_")[:-1]))
 
-    agg = aggregate(df)
+    agg = aggregate(df, "experiment")
     if not agg.empty:
         agg_path = out_dir / "benchmark_summary_agg.csv"
         agg.to_csv(agg_path, index=False)
