@@ -8,7 +8,7 @@ seed: 42
 max_train_batches: 1000 # limit processed batches
 max_val_batches: 1000 # limit processed batches
 local_model_path: null # set to local HuggingFace model dir for scdino models, e.g. "outputs/train/.../hf_model", or null
-channel_adaptation_flavor: "DINO4CELL_CONCAT" # "mean", "pick_1", "pick_2", "pick_3", "DINO4CELL_CONCAT", "DINO4CELL_MEAN"; only used for pretrained models to adapt them to non 3 channel images
+channel_adaptation_flavor: "DINO4CELL_MEAN" # "mean", "pick_1", "pick_2", "pick_3", "DINO4CELL_CONCAT", "DINO4CELL_MEAN"; only used for pretrained models to adapt them to non 3 channel images
 
 # Hardware configuration
 datamodule:

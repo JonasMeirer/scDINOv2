@@ -26,9 +26,11 @@ class PerChannelWrapper(nn.Module):
             rgb = x[:, c : c + 1, :, :].expand(-1, 3, -1, -1)  # (B, 3, H, W)
             emb = self.extract_fn(self.model(rgb))  # (B, D)
             parts.append(emb)
-        if flavor == "concat":
+        if self.flavor == "concat":
             return torch.cat(parts, dim=1) # (B, C*D)
-        elif flavor == "mean":
+        elif self.flavor == "mean":
+            # list to tensor
+            parts = torch.stack(parts) # (C, B, D)
             return torch.mean(parts, dim=0) # (B, D)
         else:
             raise ValueError(f"Unknown flavor {self.flavor!r}, expected one of {FLAVORS}")
