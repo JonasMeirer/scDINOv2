@@ -137,6 +137,12 @@ def run_inference(cfg: DictConfig):
     # Get output directory
     out_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     out_dir = Path(out_dir) / "results.json"
+    results = {
+        "seed": cfg.seed,
+        "metrics": {"val_knn_top1": results['top1'], 
+                    "val_knn_top5": results['top5'], 
+                    "val_silhouette": results['silhouette']}
+    }
     with open(out_dir, "w") as f:
         json.dump(results, f)
 
