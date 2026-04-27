@@ -193,6 +193,7 @@ class DINOViewTransform:
         self,
         crop_size: int = 50,
         crop_scale: Tuple[float, float] = (0.4, 1.0),
+        do_center_crop: bool = False,
         hf_prob: float = 0.5,
         vf_prob: float = 0,
         rr_prob: float = 0,
@@ -216,13 +217,17 @@ class DINOViewTransform:
     ):
 
         transform = []
-
-        transform += [
-            T.RandomResizedCrop(
+        
+        if do_center_crop:
+            transform.append(T.CenterCrop(crop_size))
+        else:
+            transform.append(T.RandomResizedCrop(
                 size=crop_size,
                 scale=crop_scale,
                 interpolation=InterpolationMode.BICUBIC,
             ),
+            )
+        transform += [
             T.RandomHorizontalFlip(p=hf_prob),
             T.RandomVerticalFlip(p=vf_prob),
             T.RandomApply(
