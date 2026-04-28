@@ -1,5 +1,6 @@
 global_crop_scale: [0.4, 1]
 local_crop_scale: [0.1, 0.4]
+do_center_crop: false
 n_local_views: 8
 global_crop_size: 56
 local_crop_size: 24
