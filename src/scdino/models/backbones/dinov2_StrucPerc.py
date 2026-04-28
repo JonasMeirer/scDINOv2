@@ -472,9 +472,11 @@ class PerceiverPatchEmbed(nn.Module):
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=ps, stride=ps)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
         x = self.proj(x)  # (B, D, H_in, W_in)
-        return x.flatten(2).transpose(1, 2)  # (B, N_in, D)
+        h_in, w_in = x.shape[-2], x.shape[-1]
+        x = x.flatten(2).transpose(1, 2)  # (B, N_in, D)
+        return x, (h_in, w_in)
 
 
 class PerceiverStrucPerc(nn.Module):
@@ -634,31 +636,22 @@ class PerceiverStrucPerc(nn.Module):
     # ------------------------------------------------------------------
 
     def _build_positions(self) -> None:
-        """Compute input + latent positions in latent-cell units."""
-        latent_h, latent_w = self.latent_size
-        input_h, input_w = self.patch_embed.input_grid_size
+        """Pre-compute the latent grid positions (fixed at init).
 
-        if self.rope_scale == "latent":
-            in_y = (torch.arange(input_h, dtype=torch.float32) + 0.5) * (
-                latent_h / input_h
-            )
-            in_x = (torch.arange(input_w, dtype=torch.float32) + 0.5) * (
-                latent_w / input_w
-            )
+        Input positions depend on the actual conv output grid (which differs
+        between global and local crops), so they are computed on the fly in
+        :meth:`_compute_input_pos`. Only the latent grid is cached here.
+        """
+        latent_h, latent_w = self.latent_size
+        if self.rope_scale in ("latent", "input"):
             lat_y = torch.arange(latent_h, dtype=torch.float32) + 0.5
             lat_x = torch.arange(latent_w, dtype=torch.float32) + 0.5
-        elif self.rope_scale == "input":
-            in_y = torch.arange(input_h, dtype=torch.float32) + 0.5
-            in_x = torch.arange(input_w, dtype=torch.float32) + 0.5
-            lat_y = (torch.arange(latent_h, dtype=torch.float32) + 0.5) * (
-                input_h / latent_h
-            )
-            lat_x = (torch.arange(latent_w, dtype=torch.float32) + 0.5) * (
-                input_w / latent_w
-            )
+            if self.rope_scale == "input":
+                # Latent grid is rescaled to match the configured input grid.
+                input_h, input_w = self.patch_embed.input_grid_size
+                lat_y = lat_y * (input_h / latent_h)
+                lat_x = lat_x * (input_w / latent_w)
         elif self.rope_scale == "normalized":
-            in_y = (torch.arange(input_h, dtype=torch.float32) + 0.5) / input_h
-            in_x = (torch.arange(input_w, dtype=torch.float32) + 0.5) / input_w
             lat_y = (torch.arange(latent_h, dtype=torch.float32) + 0.5) / latent_h
             lat_x = (torch.arange(latent_w, dtype=torch.float32) + 0.5) / latent_w
         else:
@@ -667,17 +660,47 @@ class PerceiverStrucPerc(nn.Module):
                 "Expected one of: 'latent', 'input', 'normalized'."
             )
 
-        # Row-major flattening (matches ``flatten(2).transpose`` in patch embed).
-        yy_in, xx_in = torch.meshgrid(in_y, in_x, indexing="ij")
-        input_pos = torch.stack([xx_in, yy_in], dim=-1).reshape(-1, 2)
-
         yy_lat, xx_lat = torch.meshgrid(lat_y, lat_x, indexing="ij")
         latent_pos = torch.stack([xx_lat, yy_lat], dim=-1).reshape(-1, 2)
 
         # Persistent so the values survive ``from_pretrained`` round-trips
         # (HF meta-init only fills tensors present in the saved state dict).
-        self.register_buffer("input_pos", input_pos, persistent=True)
         self.register_buffer("latent_pos", latent_pos, persistent=True)
+
+    def _compute_input_pos(
+        self, input_h: int, input_w: int, device: torch.device, dtype: torch.dtype
+    ) -> Tensor:
+        """Compute input-token positions for an arbitrary (h, w) grid.
+
+        Each crop is treated as a standalone image: the input grid spans
+        ``[0, latent_W]`` (or whichever scale ``rope_scale`` selects)
+        regardless of the crop's absolute size. This is what we want for the
+        DINOv2 multi-crop pipeline where local crops should attend to the
+        full latent grid the same way global crops do.
+        """
+        latent_h, latent_w = self.latent_size
+
+        if self.rope_scale == "latent":
+            in_y = (torch.arange(input_h, device=device, dtype=dtype) + 0.5) * (
+                latent_h / input_h
+            )
+            in_x = (torch.arange(input_w, device=device, dtype=dtype) + 0.5) * (
+                latent_w / input_w
+            )
+        elif self.rope_scale == "input":
+            in_y = torch.arange(input_h, device=device, dtype=dtype) + 0.5
+            in_x = torch.arange(input_w, device=device, dtype=dtype) + 0.5
+        elif self.rope_scale == "normalized":
+            in_y = (torch.arange(input_h, device=device, dtype=dtype) + 0.5) / input_h
+            in_x = (torch.arange(input_w, device=device, dtype=dtype) + 0.5) / input_w
+        else:
+            raise ValueError(
+                f"Unknown rope_scale={self.rope_scale!r}. "
+                "Expected one of: 'latent', 'input', 'normalized'."
+            )
+
+        yy_in, xx_in = torch.meshgrid(in_y, in_x, indexing="ij")
+        return torch.stack([xx_in, yy_in], dim=-1).reshape(-1, 2)
 
     # ------------------------------------------------------------------
     # Forward helpers
@@ -690,8 +713,13 @@ class PerceiverStrucPerc(nn.Module):
         full = torch.cat([prefix_pos, self.latent_pos], dim=0)  # (n_prefix + L, 2)
         return full.unsqueeze(0).expand(batch_size, -1, -1)
 
-    def _kv_positions(self, batch_size: int) -> Tensor:
-        return self.input_pos.unsqueeze(0).expand(batch_size, -1, -1)
+    def _kv_positions(
+        self, batch_size: int, input_h: int, input_w: int
+    ) -> Tensor:
+        pos = self._compute_input_pos(
+            input_h, input_w, device=self.latent_pos.device, dtype=self.latent_pos.dtype
+        )
+        return pos.unsqueeze(0).expand(batch_size, -1, -1)
 
     def build_initial_queries(self, batch_size: int) -> Tensor:
         """Construct the initial (prefix + latent) query tokens."""
@@ -732,10 +760,10 @@ class PerceiverStrucPerc(nn.Module):
         B = images.shape[0]
         n_prefix = self.num_prefix_tokens
 
-        in_tokens = self.patch_embed(images)  # (B, N_in, D)
+        in_tokens, (h_in, w_in) = self.patch_embed(images)  # (B, N_in, D)
         q = self.build_initial_queries(B)  # (B, n_prefix + L, D)
         full_q_pos = self._q_positions(B)
-        kv_pos = self._kv_positions(B)
+        kv_pos = self._kv_positions(B, h_in, w_in)
 
         intermediates: List[Tensor] = []
         mask_applied = False
@@ -803,10 +831,10 @@ class PerceiverStrucPerc(nn.Module):
                 "last_selfattention requires at least one self-attention block."
             )
 
-        in_tokens = self.patch_embed(images)
+        in_tokens, (h_in, w_in) = self.patch_embed(images)
         q = self.build_initial_queries(B)
         full_q_pos = self._q_positions(B)
-        kv_pos = self._kv_positions(B)
+        kv_pos = self._kv_positions(B, h_in, w_in)
 
         if self.depth_outer == 1:
             for blk in self.cross_blocks:
@@ -857,10 +885,10 @@ class PerceiverStrucPerc(nn.Module):
         """
         B = images.shape[0]
         n_prefix = self.num_prefix_tokens
-        in_tokens = self.patch_embed(images)
+        in_tokens, (h_in, w_in) = self.patch_embed(images)
         q = self.build_initial_queries(B)
         full_q_pos = self._q_positions(B)
-        kv_pos = self._kv_positions(B)
+        kv_pos = self._kv_positions(B, h_in, w_in)
         return self.cross_blocks[0](
             q,
             in_tokens,
@@ -934,7 +962,8 @@ class MaskedPerceiverStrucPerc(nn.Module):
 
     def images_to_tokens(self, images: Tensor) -> Tensor:
         """Return the input branch's patch tokens (not used in encode)."""
-        return self.vit.patch_embed(images)
+        tokens, _ = self.vit.patch_embed(images)
+        return tokens
 
     def prepend_prefix_tokens(self, x: Tensor) -> Tensor:
         prefix = [self.vit.cls_token.expand(x.shape[0], -1, -1)]
@@ -1034,7 +1063,11 @@ class MaskedPerceiverStrucPerc(nn.Module):
         """
         attn = self.perceiver.first_cross_attention(images)  # (B, h, P+L, N_in)
         cls_to_input = attn[:, :, 0, :]  # (B, h, N_in)
-        H_in, W_in = self.vit.patch_embed.input_grid_size
+        # Compute the actual input grid from the image (handles crop sizes
+        # that differ from the configured ``img_size``).
+        ph, pw = self.vit.patch_embed.patch_size
+        H_in = images.shape[-2] // ph
+        W_in = images.shape[-1] // pw
         B, h, L_in = cls_to_input.shape
         if H_in * W_in != L_in:
             raise AssertionError(f"{H_in}*{W_in} != {L_in}")
