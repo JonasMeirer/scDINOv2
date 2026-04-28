@@ -31,8 +31,14 @@ class ScDINOConfig(PretrainedConfig):
         num_self_blocks: int = 8,
         num_cross_blocks: int = 1,
         depth_outer: int = 1,
-        rope_base: float = 100.0,
-        rope_scale: str = "latent",
+        # 2D RoPE (DINOv3-style)
+        rope_base: float | None = 100.0,
+        rope_min_period: float | None = None,
+        rope_max_period: float | None = None,
+        rope_normalize_coords: str = "separate",
+        rope_shift_coords: float | None = None,
+        rope_jitter_coords: float | None = None,
+        rope_rescale_coords: float | None = None,
         init_values: float = 1e-5,
         qkv_bias: bool = True,
         qk_norm: bool = False,
@@ -56,7 +62,12 @@ class ScDINOConfig(PretrainedConfig):
         self.num_cross_blocks = num_cross_blocks
         self.depth_outer = depth_outer
         self.rope_base = rope_base
-        self.rope_scale = rope_scale
+        self.rope_min_period = rope_min_period
+        self.rope_max_period = rope_max_period
+        self.rope_normalize_coords = rope_normalize_coords
+        self.rope_shift_coords = rope_shift_coords
+        self.rope_jitter_coords = rope_jitter_coords
+        self.rope_rescale_coords = rope_rescale_coords
         self.init_values = init_values
         self.qkv_bias = qkv_bias
         self.qk_norm = qk_norm

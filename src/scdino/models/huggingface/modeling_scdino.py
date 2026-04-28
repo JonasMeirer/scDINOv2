@@ -69,7 +69,12 @@ class ScDINOModel(PreTrainedModel):
                 drop_path_rate=0.0,
                 init_values=config.init_values,
                 rope_base=config.rope_base,
-                rope_scale=config.rope_scale,
+                rope_min_period=config.rope_min_period,
+                rope_max_period=config.rope_max_period,
+                rope_normalize_coords=config.rope_normalize_coords,
+                rope_shift_coords=config.rope_shift_coords,
+                rope_jitter_coords=config.rope_jitter_coords,
+                rope_rescale_coords=config.rope_rescale_coords,
             )
             self.backbone = MaskedPerceiverStrucPerc(perceiver=perceiver)
 
