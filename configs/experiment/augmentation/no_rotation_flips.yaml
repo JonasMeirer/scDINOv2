@@ -15,4 +15,4 @@ datamodule:
 hydra:
   sweep:
     dir: outputs/benchmark/augmentation
-    subdir: minimal_seed${seed}
+    subdir: no_rotation_flips_seed${seed}

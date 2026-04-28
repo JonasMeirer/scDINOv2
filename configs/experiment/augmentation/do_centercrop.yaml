@@ -13,4 +13,4 @@ datamodule:
 hydra:
   sweep:
     dir: outputs/benchmark/augmentation
-    subdir: minimal_seed${seed}
+    subdir: do_centercrop_seed${seed}
