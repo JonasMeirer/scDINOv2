@@ -7,6 +7,8 @@ import json
 from transformers import AutoModel
 import lightning as L
 from sklearn.metrics import silhouette_score
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
@@ -35,7 +37,6 @@ def run_inference(cfg: DictConfig):
     )
     model_id = cfg.local_model_path if cfg.get("local_model_path") else cfg.model.name
     flavor = cfg.get("channel_adaptation_flavor", "mean")
-    print(f"Using channel adaptation flavor: {flavor}")
     num_channels = cfg.datamodule.loader.num_channels
 
     if model_id.startswith("facebook/dinov3"):
@@ -45,6 +46,7 @@ def run_inference(cfg: DictConfig):
         def extract_embeddings(model_output):
             return model_output.pooler_output
 
+        print(f"Using channel adaptation flavor: {flavor}")
         if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, extract_embeddings, num_channels)
         elif flavor == "DINO4CELL_MEAN":
@@ -61,6 +63,7 @@ def run_inference(cfg: DictConfig):
         def extract_embeddings(model_output):
             return model_output.pooler_output
 
+        print(f"Using channel adaptation flavor: {flavor}")
         if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, extract_embeddings, num_channels)
         elif flavor == "DINO4CELL_MEAN":
@@ -77,6 +80,12 @@ def run_inference(cfg: DictConfig):
 
         def extract_embeddings(model_output):
             return model_output.pooler_output
+        
+        def get_attn_heatmap(images, target_size):
+            heatmap = model.backbone.get_cls_attention_map(images.to(device), head_fusion="none")
+            heatmap = F.interpolate(heatmap, size=target_size, mode='bilinear', align_corners=False)
+            return heatmap
+            
 
     if isinstance(model, PerChannelWrapper):
         def embed(images):
@@ -92,6 +101,28 @@ def run_inference(cfg: DictConfig):
     for i, (images, labels) in tqdm(enumerate(train_loader), total=max_train_batches):
         if i >= max_train_batches:
             break
+        
+        # vizualise images and attn_heatmaps
+        if i==0 and callable(get_attn_heatmap):
+            attn_heatmaps = get_attn_heatmap(images, target_size=images.shape[-2:])
+            plt.figure(figsize=(6, 6))
+            nrows = 10
+            ncols = images.shape[1] + attn_heatmaps.shape[1]
+            for j in range(nrows):
+                for c in range(images.shape[1]):
+                    idx = j * ncols + c + 1
+                    plt.subplot(nrows, ncols, idx)
+                    plt.imshow(images[j, c].cpu().numpy(), cmap='gray')
+                    plt.axis('off')
+                for c in range(attn_heatmaps.shape[1]):
+                    idx = j * ncols + images.shape[1] + c + 1
+                    plt.subplot(nrows, ncols, idx)
+                    plt.imshow(attn_heatmaps[j, c].cpu().numpy(), cmap='viridis')
+                    plt.axis('off')
+            plt.tight_layout()
+            plt.savefig("attn_heatmap.png")
+            plt.show()
+        
         with torch.no_grad():
             train_features.append(embed(images.to(device)).detach().cpu())
             train_labels.append(labels)

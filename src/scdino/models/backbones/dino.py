@@ -17,6 +17,77 @@ def freeze_eval_module(module: nn.Module) -> None:
     module.eval()
 
 
+@torch.no_grad()
+def vit_get_last_selfattention(vit: nn.Module, images: Tensor) -> Tensor:
+    """Return last-block attention probs of a TIMM ``VisionTransformer``.
+
+    Shape: ``(B, num_heads, N, N)``. TIMM's ``Attention.forward`` uses fused
+    SDPA which never materializes the softmax matrix, so we run all blocks
+    except the last normally and recompute the last block's attention
+    explicitly.
+    Code adapted from here:
+    https://github.com/huggingface/pytorch-image-models/blob/2703d155c88d27bba9a1f465f5489a7947ffc313/timm/models/vision_transformer.py#L698
+    """
+    if not isinstance(vit, VisionTransformer):
+        raise RuntimeError(
+            "Attention extraction is only supported for ViT backbones, "
+            f"got {type(vit).__name__}."
+        )
+
+    x = vit.patch_embed(images)
+    x = vit._pos_embed(x)
+    x = vit.patch_drop(x)
+    x = vit.norm_pre(x)
+    for blk in vit.blocks[:-1]:
+        x = blk(x)
+    last = vit.blocks[-1]
+    x = last.norm1(x)
+    a = last.attn
+    B, N, _ = x.shape
+    qkv = (
+        a.qkv(x)
+        .reshape(B, N, 3, a.num_heads, a.head_dim)
+        .permute(2, 0, 3, 1, 4)
+    )
+    q, k, _ = qkv.unbind(0)
+    q, k = a.q_norm(q), a.k_norm(k)
+    attn = (q @ k.transpose(-2, -1)) * a.scale
+    return attn.softmax(dim=-1)
+
+
+@torch.no_grad()
+def vit_get_cls_attention_map(
+    vit: nn.Module, images: Tensor, head_fusion: str = "mean"
+) -> Tensor:
+    """Return CLS->patch attention as a spatial heatmap.
+
+    Args:
+        vit: A TIMM ``VisionTransformer``.
+        images: Tensor of shape ``(B, C, H_img, W_img)``.
+        head_fusion: How to combine attention heads. One of
+            ``"mean"`` -> ``(B, H, W)``, ``"max"`` -> ``(B, H, W)``,
+            ``"none"`` -> ``(B, num_heads, H, W)``.
+    """
+    attn = vit_get_last_selfattention(vit, images)  # (B, h, N, N)
+    p = vit.num_prefix_tokens
+    cls_to_patch = attn[:, :, 0, p:]  # (B, h, H*W)
+    B, h, L = cls_to_patch.shape
+    ph, pw = vit.patch_embed.patch_size
+    H, W = images.shape[-2] // ph, images.shape[-1] // pw
+    assert H * W == L, f"{H}*{W} != {L}"
+    cls_to_patch = cls_to_patch.reshape(B, h, H, W)
+    if head_fusion == "mean":
+        return cls_to_patch.mean(dim=1).unsqueeze(1)
+    if head_fusion == "max":
+        return cls_to_patch.amax(dim=1).unsqueeze(1)
+    if head_fusion == "none":
+        return cls_to_patch
+    raise ValueError(
+        f"Invalid head_fusion: {head_fusion!r}. "
+        "Expected one of: 'mean', 'max', 'none'."
+    )
+
+
 class DINO(nn.Module):
     def __init__(
         self,
@@ -91,6 +162,27 @@ class DINO(nn.Module):
         features = self.student_backbone(x).flatten(start_dim=1)
         z = self.student_head(features)
         return z
+
+    @torch.no_grad()
+    def get_last_selfattention(self, images: Tensor) -> Tensor:
+        """Return last-block attention probs of the teacher ViT.
+
+        Shape: ``(B, num_heads, N, N)``. Only supported for ViT backbones.
+        See ``vit_get_last_selfattention``.
+        """
+        return vit_get_last_selfattention(self.teacher_backbone, images)
+
+    @torch.no_grad()
+    def get_cls_attention_map(
+        self, images: Tensor, head_fusion: str = "mean"
+    ) -> Tensor:
+        """Return CLS->patch attention as a spatial heatmap.
+
+        See ``vit_get_cls_attention_map``.
+        """
+        return vit_get_cls_attention_map(
+            self.teacher_backbone, images, head_fusion=head_fusion
+        )
 
 
 # copy pasted from lightly

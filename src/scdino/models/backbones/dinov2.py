@@ -602,6 +602,78 @@ class MaskedVisionTransformerTIMM(MaskedVisionTransformer):
         tokens = self.vit.norm(tokens)
         return tokens
 
+    @torch.no_grad()
+    def get_last_selfattention(
+        self,
+        images: Tensor,
+        idx_mask: Optional[Tensor] = None,
+        idx_keep: Optional[Tensor] = None,
+        mask: Optional[Tensor] = None,
+    ) -> Tensor:
+        """Return attention probs of the last block, shape (B, num_heads, N, N).
+
+        TIMM's ``Attention.forward`` uses fused SDPA which never materializes the
+        softmax attention matrix. This method runs all blocks except the last
+        normally, then recomputes the last block's attention explicitly so that
+        the softmax weights can be returned.
+        Original code: 
+        https://github.com/huggingface/pytorch-image-models/blob/2703d155c88d27bba9a1f465f5489a7947ffc313/timm/models/vision_transformer.py#L58
+        """
+        tokens = self.preprocess(
+            images=images, idx_mask=idx_mask, idx_keep=idx_keep, mask=mask
+        )
+        tokens = self.vit.norm_pre(tokens)
+        for blk in self.vit.blocks[:-1]:
+            tokens = blk(tokens)
+        last = self.vit.blocks[-1]
+        x = last.norm1(tokens)
+        a = last.attn
+        B, N, C = x.shape
+        qkv = (
+            a.qkv(x)
+            .reshape(B, N, 3, a.num_heads, a.head_dim)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, _ = qkv.unbind(0)
+        q, k = a.q_norm(q), a.k_norm(k)
+        attn = (q @ k.transpose(-2, -1)) * a.scale
+        return attn.softmax(dim=-1)
+
+    @torch.no_grad()
+    def get_cls_attention_map(
+        self, images: Tensor, head_fusion: str = "mean"
+    ) -> Tensor:
+        """Return CLS->patch attention as a spatial heatmap.
+
+        Args:
+            images: Tensor of shape (B, C, H_img, W_img).
+            head_fusion: How to combine attention heads. One of:
+                ``"mean"`` -> (B, H, W), ``"max"`` -> (B, H, W),
+                ``"none"`` -> (B, num_heads, H, W).
+
+        Returns:
+            Tensor with the CLS token's attention to each patch token, reshaped
+            to the spatial patch grid.
+        """
+        attn = self.get_last_selfattention(images)  # (B, h, N, N)
+        p = self.vit.num_prefix_tokens
+        cls_to_patch = attn[:, :, 0, p:]  # (B, h, H*W)
+        B, h, L = cls_to_patch.shape
+        ph, pw = self.vit.patch_embed.patch_size
+        H, W = images.shape[-2] // ph, images.shape[-1] // pw
+        assert H * W == L, f"{H}*{W} != {L}"
+        cls_to_patch = cls_to_patch.reshape(B, h, H, W)
+        if head_fusion == "mean":
+            return cls_to_patch.mean(dim=1).unsqueeze(1)
+        if head_fusion == "max":
+            return cls_to_patch.amax(dim=1).unsqueeze(1)
+        if head_fusion == "none":
+            return cls_to_patch
+        raise ValueError(
+            f"Invalid head_fusion: {head_fusion!r}. "
+            "Expected one of: 'mean', 'max', 'none'."
+        )
+
     def images_to_tokens(self, images: Tensor) -> Tensor:
         tokens: Tensor = self.vit.patch_embed(images)
         if self.vit.dynamic_img_size:

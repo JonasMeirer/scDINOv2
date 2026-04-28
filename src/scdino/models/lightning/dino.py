@@ -82,6 +82,31 @@ class DINO(L.LightningModule):
         self.teacher_backbone.train()
         return embeds
 
+    @torch.no_grad()
+    def get_last_selfattention(self, x: Tensor) -> Tensor:
+        """Return last-block attention probs of the teacher backbone.
+
+        Shape: ``(B, num_heads, N, N)``. Only supported for ViT backbones.
+        See ``vit_get_last_selfattention``.
+        """
+        from src.scdino.models.backbones.dino import vit_get_last_selfattention
+
+        self.teacher_backbone.eval()
+        return vit_get_last_selfattention(self.teacher_backbone, x)
+
+    @torch.no_grad()
+    def get_cls_attention_map(self, x: Tensor, head_fusion: str = "mean") -> Tensor:
+        """Return CLS->patch attention heatmap of the teacher backbone.
+
+        See ``vit_get_cls_attention_map``.
+        """
+        from src.scdino.models.backbones.dino import vit_get_cls_attention_map
+
+        self.teacher_backbone.eval()
+        return vit_get_cls_attention_map(
+            self.teacher_backbone, x, head_fusion=head_fusion
+        )
+
     def save_pretrained(self, save_directory: str, **kwargs) -> None:
         """Export the teacher backbone as a HuggingFace model."""
         backbone_type = self.backbone_config["type"]
