@@ -36,8 +36,9 @@ from __future__ import annotations
 
 import copy
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -72,112 +73,249 @@ from src.scdino.models.backbones.dinov2 import (
 # ---------------------------------------------------------------------------
 
 
-class RoPE2D(nn.Module):
-    """Axial 2D Rotary Position Embedding.
+_AugmentState = Tuple[Optional[Tensor], Optional[Tensor], Optional[Tensor]]
 
-    The head dimension ``D`` is split in half: the first ``D/2`` channels are
-    rotated using the x-coordinate of the token, the second ``D/2`` using the
-    y-coordinate. ``D`` must be divisible by 4 (each axis uses
-    LLaMA-style "rotate-half" RoPE which requires the half-axis dim to be
-    even).
+
+class RopePositionEmbedding(nn.Module):
+    """Axial 2D Rotary Position Embedding (DINOv3-style).
+
+    Closely mirrors the reference implementation from DINOv3's
+    ``RopePositionEmbedding``:
+
+    * Stores ``periods`` of shape ``(D_head // 4,)`` either from a single
+      ``base`` (then ``periods[k] = base ** (2k / (D_head/2))``) or from an
+      explicit ``(min_period, max_period)`` range.
+    * Coordinates live in ``[-1, +1]`` after a per-image normalisation
+      (``"min"`` / ``"max"`` / ``"separate"``).
+    * Per-forward training-time augmentations: ``shift_coords``,
+      ``jitter_coords``, ``rescale_coords``.
+    * Returns ``(sin, cos)`` of shape ``(H * W, D_head)`` ready to be
+      multiplied with ``q`` / ``k`` after expanding over batch and heads.
+
+    The two intentional differences vs. DINOv3:
+
+    * ``forward`` accepts an optional ``augment_state`` so that a single
+      sampled augmentation can be **shared** across two calls (e.g. between
+      the latent Q grid and the input KV grid in cross-attention).
+    * ``head_dim`` is required at construction time (DINOv3 derives it from
+      ``embed_dim`` / ``num_heads``); same constraint, just expressed at the
+      level we instantiate the module.
     """
 
-    def __init__(self, head_dim: int, base: float = 100.0) -> None:
+    def __init__(
+        self,
+        head_dim: int,
+        *,
+        base: Optional[float] = 100.0,
+        min_period: Optional[float] = None,
+        max_period: Optional[float] = None,
+        normalize_coords: Literal["min", "max", "separate"] = "separate",
+        shift_coords: Optional[float] = None,
+        jitter_coords: Optional[float] = None,
+        rescale_coords: Optional[float] = None,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
         super().__init__()
         if head_dim % 4 != 0:
             raise ValueError(
-                f"RoPE2D requires head_dim divisible by 4, got {head_dim}."
+                f"RopePositionEmbedding requires head_dim divisible by 4, "
+                f"got {head_dim}."
             )
+        both_periods = min_period is not None and max_period is not None
+        if (base is None and not both_periods) or (
+            base is not None and both_periods
+        ):
+            raise ValueError(
+                "Either `base` or `min_period`+`max_period` must be provided "
+                "(but not both)."
+            )
+
         self.head_dim = head_dim
-        self.base = float(base)
-        axis_dim = head_dim // 2  # dims used per axis
-        # Half of axis_dim distinct frequencies, then duplicated to axis_dim
-        # via the rotate-half trick.
-        freq_dim = axis_dim // 2
-        inv_freq = 1.0 / (
-            self.base ** (torch.arange(0, freq_dim, dtype=torch.float32) / freq_dim)
-        )
+        self.base = base
+        self.min_period = min_period
+        self.max_period = max_period
+        self.normalize_coords = normalize_coords
+        self.shift_coords = shift_coords
+        self.jitter_coords = jitter_coords
+        self.rescale_coords = rescale_coords
+        # ``dtype`` is stored separately because ``self.periods.dtype`` may
+        # differ once ``.to(...)`` is called by the user.
+        self.dtype = dtype
+
         # Persistent so HuggingFace ``from_pretrained`` (which uses meta init
         # and only restores tensors present in the saved state dict) keeps
-        # this buffer initialised.
-        self.register_buffer("inv_freq", inv_freq, persistent=True)
+        # this buffer initialised, and so that
+        # ``teacher.load_state_dict(student.state_dict())`` works.
+        self.register_buffer(
+            "periods",
+            torch.empty(head_dim // 4, device=device, dtype=dtype),
+            persistent=True,
+        )
+        self._init_weights()
 
-    @staticmethod
-    def _rotate_half(x: Tensor) -> Tensor:
-        x1, x2 = x.chunk(2, dim=-1)
-        return torch.cat((-x2, x1), dim=-1)
+    def _init_weights(self) -> None:
+        device = self.periods.device
+        dtype = self.dtype
+        Dq = self.head_dim // 4
+        if self.base is not None:
+            periods = self.base ** (
+                2 * torch.arange(Dq, device=device, dtype=dtype) / (self.head_dim // 2)
+            )
+        else:
+            assert self.min_period is not None and self.max_period is not None
+            base = self.max_period / self.min_period
+            exponents = torch.linspace(0, 1, Dq, device=device, dtype=dtype)
+            periods = base**exponents
+            periods = periods / base
+            periods = periods * self.max_period
+        self.periods.data = periods
 
-    def _angle(self, pos: Tensor) -> Tuple[Tensor, Tensor]:
-        # pos: (..., 1) scalar position per token along one axis.
-        # angles: (..., freq_dim)
-        angles = pos * self.inv_freq.to(dtype=pos.dtype, device=pos.device)
-        cos = torch.cos(angles)
-        sin = torch.sin(angles)
-        # Duplicate to axis_dim via rotate-half convention.
-        cos = torch.cat((cos, cos), dim=-1)
-        sin = torch.cat((sin, sin), dim=-1)
-        return cos, sin
+    # ------------------------------------------------------------------
+    # Coordinate helpers
+    # ------------------------------------------------------------------
 
-    def rotate(
-        self,
-        x: Tensor,
-        positions: Tensor,
-        prefix_count: int = 0,
-    ) -> Tensor:
-        """Rotate ``x`` according to 2D positions.
+    def sample_augment_state(
+        self, device: torch.device, dtype: Optional[torch.dtype] = None
+    ) -> _AugmentState:
+        """Sample one ``(shift, jitter, rescale)`` triplet for this forward.
 
-        Args:
-            x: Tensor of shape ``(B, h, N, D)``.
-            positions: Tensor of shape ``(B, N, 2)`` with ``(x_pos, y_pos)``
-                per token. The first ``prefix_count`` tokens are passed
-                through unchanged regardless of their stored positions.
-            prefix_count: Number of tokens at the start of the sequence that
-                should not be rotated.
-
-        Returns:
-            Tensor of shape ``(B, h, N, D)`` with the spatial half rotated.
+        Returns ``(None, None, None)`` if not training or no augmentation
+        is configured.
         """
-        B, h, N, D = x.shape
-        if D != self.head_dim:
+        if not self.training:
+            return (None, None, None)
+        dt = dtype if dtype is not None else self.dtype
+        shift_hw: Optional[Tensor] = None
+        jitter_hw: Optional[Tensor] = None
+        rescale_hw: Optional[Tensor] = None
+        if self.shift_coords is not None:
+            shift_hw = torch.empty(2, device=device, dtype=dt).uniform_(
+                -self.shift_coords, self.shift_coords
+            )
+        if self.jitter_coords is not None:
+            jmax = math.log(self.jitter_coords)
+            jitter_hw = (
+                torch.empty(2, device=device, dtype=dt).uniform_(-jmax, jmax).exp()
+            )
+        if self.rescale_coords is not None:
+            rmax = math.log(self.rescale_coords)
+            rescale_hw = (
+                torch.empty(1, device=device, dtype=dt).uniform_(-rmax, rmax).exp()
+            )
+        return (shift_hw, jitter_hw, rescale_hw)
+
+    def _coords(
+        self,
+        H: int,
+        W: int,
+        device: torch.device,
+        dtype: Optional[torch.dtype],
+        augment_state: _AugmentState,
+    ) -> Tensor:
+        dd = {"device": device, "dtype": dtype}
+        if self.normalize_coords == "max":
+            max_HW = max(H, W)
+            coords_h = torch.arange(0.5, H, **dd) / max_HW
+            coords_w = torch.arange(0.5, W, **dd) / max_HW
+        elif self.normalize_coords == "min":
+            min_HW = min(H, W)
+            coords_h = torch.arange(0.5, H, **dd) / min_HW
+            coords_w = torch.arange(0.5, W, **dd) / min_HW
+        elif self.normalize_coords == "separate":
+            coords_h = torch.arange(0.5, H, **dd) / H
+            coords_w = torch.arange(0.5, W, **dd) / W
+        else:
             raise ValueError(
-                f"RoPE2D expected head_dim={self.head_dim}, got {D}."
+                f"Unknown normalize_coords: {self.normalize_coords!r}."
             )
-        if positions.shape[:2] != (B, N):
-            raise ValueError(
-                f"positions shape {tuple(positions.shape)} incompatible with "
-                f"x shape {tuple(x.shape)}."
-            )
+        coords = torch.stack(
+            torch.meshgrid(coords_h, coords_w, indexing="ij"), dim=-1
+        )  # (H, W, 2)
+        coords = coords.flatten(0, 1)  # (HW, 2)
+        coords = 2.0 * coords - 1.0  # [-1, +1]
 
-        # Split head dim into x-half and y-half.
-        Dx = D // 2
-        x_x, x_y = x[..., :Dx], x[..., Dx:]
+        shift_hw, jitter_hw, rescale_hw = augment_state
+        if shift_hw is not None:
+            coords = coords + shift_hw[None, :]
+        if jitter_hw is not None:
+            coords = coords * jitter_hw[None, :]
+        if rescale_hw is not None:
+            coords = coords * rescale_hw
+        return coords
 
-        pos_x = positions[..., 0:1].to(dtype=x.dtype)  # (B, N, 1)
-        pos_y = positions[..., 1:2].to(dtype=x.dtype)
-        cos_x, sin_x = self._angle(pos_x)  # (B, N, Dx)
-        cos_y, sin_y = self._angle(pos_y)  # (B, N, Dx)
+    def _coords_to_sincos(self, coords: Tensor) -> Tuple[Tensor, Tensor]:
+        # coords: (HW, 2). periods: (D_head // 4,).
+        periods = self.periods.to(dtype=coords.dtype, device=coords.device)
+        angles = (
+            2 * math.pi * coords[:, :, None] / periods[None, None, :]
+        )  # (HW, 2, D//4)
+        angles = angles.flatten(1, 2)  # (HW, D//2)
+        angles = angles.tile(2)  # (HW, D)
+        return angles.sin(), angles.cos()
 
-        # Broadcast over heads: (B, 1, N, Dx).
-        cos_x = cos_x.unsqueeze(1)
-        sin_x = sin_x.unsqueeze(1)
-        cos_y = cos_y.unsqueeze(1)
-        sin_y = sin_y.unsqueeze(1)
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-        rotated_x = x_x * cos_x + self._rotate_half(x_x) * sin_x
-        rotated_y = x_y * cos_y + self._rotate_half(x_y) * sin_y
+    def forward(
+        self,
+        *,
+        H: int,
+        W: int,
+        augment_state: Optional[_AugmentState] = None,
+    ) -> Tuple[Tensor, Tensor]:
+        """Compute ``(sin, cos)`` of shape ``(H * W, D_head)`` for an
+        ``H x W`` regular grid.
 
-        if prefix_count > 0:
-            # Restore the original (un-rotated) values for prefix tokens.
-            rotated_x = torch.cat(
-                [x_x[:, :, :prefix_count, :], rotated_x[:, :, prefix_count:, :]],
-                dim=2,
-            )
-            rotated_y = torch.cat(
-                [x_y[:, :, :prefix_count, :], rotated_y[:, :, prefix_count:, :]],
-                dim=2,
-            )
+        If ``augment_state`` is provided it is used as-is so the same
+        translation / jitter / rescale can be shared between Q and KV in
+        cross-attention. Otherwise a fresh state is sampled (training only).
+        """
+        device = self.periods.device
+        dtype = self.dtype
+        if augment_state is None:
+            augment_state = self.sample_augment_state(device, dtype)
+        coords = self._coords(H, W, device, dtype, augment_state)
+        return self._coords_to_sincos(coords)
 
-        return torch.cat([rotated_x, rotated_y], dim=-1)
+
+def apply_rotary(x: Tensor, sin: Tensor, cos: Tensor) -> Tensor:
+    """Apply rotary position embedding.
+
+    Args:
+        x: ``(B, h, N, D)``.
+        sin, cos: ``(N, D)`` (will broadcast over batch and heads) or any
+            broadcast-compatible shape.
+
+    Returns:
+        Tensor of shape ``(B, h, N, D)``.
+    """
+    # rotate_half (LLaMA convention): cat(-x2, x1) where x1, x2 = chunk(2).
+    x1, x2 = x.chunk(2, dim=-1)
+    rotated = torch.cat((-x2, x1), dim=-1)
+    # Make sin/cos broadcastable against (B, h, N, D).
+    while sin.dim() < x.dim():
+        sin = sin.unsqueeze(0)
+        cos = cos.unsqueeze(0)
+    return x * cos + rotated * sin
+
+
+def pad_sincos_for_prefix(
+    sin: Tensor, cos: Tensor, n_prefix: int
+) -> Tuple[Tensor, Tensor]:
+    """Prepend identity rotations (sin=0, cos=1) for ``n_prefix`` tokens.
+
+    Used for CLS / register tokens that should not have any spatial RoPE
+    applied to them.
+    """
+    if n_prefix <= 0:
+        return sin, cos
+    pad_sin = sin.new_zeros(n_prefix, sin.shape[-1])
+    pad_cos = cos.new_ones(n_prefix, cos.shape[-1])
+    sin = torch.cat([pad_sin, sin], dim=0)
+    cos = torch.cat([pad_cos, cos], dim=0)
+    return sin, cos
 
 
 # ---------------------------------------------------------------------------
@@ -186,13 +324,18 @@ class RoPE2D(nn.Module):
 
 
 class MultiHeadAttentionRoPE2D(nn.Module):
-    """Multi-head attention with 2D RoPE on Q and K (never on V)."""
+    """Multi-head attention with 2D RoPE on Q and K (never on V).
+
+    Pre-computed ``(sin, cos)`` pairs are passed in by the caller — this
+    keeps the shared :class:`RopePositionEmbedding` instance out of every
+    attention block's submodule tree (so the buffer ``periods`` lives only
+    once in the state dict, under the parent Perceiver).
+    """
 
     def __init__(
         self,
         dim: int,
         num_heads: int,
-        rope: RoPE2D,
         qkv_bias: bool = True,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
@@ -219,21 +362,12 @@ class MultiHeadAttentionRoPE2D(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-        # Store ``rope`` as a non-submodule reference. The top-level
-        # ``PerceiverStrucPerc`` owns the only ``RoPE2D`` instance; if we
-        # registered it here too, every attention block would expose the
-        # same ``inv_freq`` buffer at a different state-dict path which
-        # confuses HuggingFace's ``save_pretrained``.
-        self.__dict__["rope"] = rope
-
     def forward(
         self,
         q_tokens: Tensor,
         kv_tokens: Tensor,
-        q_pos: Tensor,
-        kv_pos: Tensor,
-        q_prefix_count: int = 0,
-        kv_prefix_count: int = 0,
+        q_sincos: Tuple[Tensor, Tensor],
+        kv_sincos: Tuple[Tensor, Tensor],
         return_attn: bool = False,
     ) -> Tensor:
         B, Nq, C = q_tokens.shape
@@ -247,8 +381,10 @@ class MultiHeadAttentionRoPE2D(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
 
-        q = self.rope.rotate(q, q_pos, prefix_count=q_prefix_count)
-        k = self.rope.rotate(k, kv_pos, prefix_count=kv_prefix_count)
+        q_sin, q_cos = q_sincos
+        k_sin, k_cos = kv_sincos
+        q = apply_rotary(q, q_sin.to(dtype=q.dtype), q_cos.to(dtype=q.dtype))
+        k = apply_rotary(k, k_sin.to(dtype=k.dtype), k_cos.to(dtype=k.dtype))
 
         if return_attn:
             attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -275,7 +411,6 @@ class CrossAttentionBlock(nn.Module):
         self,
         dim: int,
         num_heads: int,
-        rope: RoPE2D,
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop: float = 0.0,
@@ -291,7 +426,6 @@ class CrossAttentionBlock(nn.Module):
         self.attn = MultiHeadAttentionRoPE2D(
             dim=dim,
             num_heads=num_heads,
-            rope=rope,
             qkv_bias=qkv_bias,
             attn_drop=attn_drop,
             proj_drop=drop,
@@ -322,30 +456,19 @@ class CrossAttentionBlock(nn.Module):
         self,
         q: Tensor,
         kv: Tensor,
-        q_pos: Tensor,
-        kv_pos: Tensor,
-        q_prefix_count: int = 0,
-        kv_prefix_count: int = 0,
+        q_sincos: Tuple[Tensor, Tensor],
+        kv_sincos: Tuple[Tensor, Tensor],
         return_attn: bool = False,
     ) -> Tensor:
         if return_attn:
             return self.attn(
                 self.norm1_q(q),
                 self.norm1_kv(kv),
-                q_pos,
-                kv_pos,
-                q_prefix_count=q_prefix_count,
-                kv_prefix_count=kv_prefix_count,
+                q_sincos,
+                kv_sincos,
                 return_attn=True,
             )
-        h = self.attn(
-            self.norm1_q(q),
-            self.norm1_kv(kv),
-            q_pos,
-            kv_pos,
-            q_prefix_count=q_prefix_count,
-            kv_prefix_count=kv_prefix_count,
-        )
+        h = self.attn(self.norm1_q(q), self.norm1_kv(kv), q_sincos, kv_sincos)
         q = q + self.drop_path1(self.ls1(h))
         q = q + self.drop_path2(self.ls2(self.mlp(self.norm2(q))))
         return q
@@ -358,7 +481,6 @@ class SelfAttentionBlock(nn.Module):
         self,
         dim: int,
         num_heads: int,
-        rope: RoPE2D,
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop: float = 0.0,
@@ -373,7 +495,6 @@ class SelfAttentionBlock(nn.Module):
         self.attn = MultiHeadAttentionRoPE2D(
             dim=dim,
             num_heads=num_heads,
-            rope=rope,
             qkv_bias=qkv_bias,
             attn_drop=attn_drop,
             proj_drop=drop,
@@ -403,29 +524,13 @@ class SelfAttentionBlock(nn.Module):
     def forward(
         self,
         x: Tensor,
-        pos: Tensor,
-        prefix_count: int = 0,
+        sincos: Tuple[Tensor, Tensor],
         return_attn: bool = False,
     ) -> Tensor:
         x_norm = self.norm1(x)
         if return_attn:
-            return self.attn(
-                x_norm,
-                x_norm,
-                pos,
-                pos,
-                q_prefix_count=prefix_count,
-                kv_prefix_count=prefix_count,
-                return_attn=True,
-            )
-        h = self.attn(
-            x_norm,
-            x_norm,
-            pos,
-            pos,
-            q_prefix_count=prefix_count,
-            kv_prefix_count=prefix_count,
-        )
+            return self.attn(x_norm, x_norm, sincos, sincos, return_attn=True)
+        h = self.attn(x_norm, x_norm, sincos, sincos)
         x = x + self.drop_path1(self.ls1(h))
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
         return x
@@ -508,8 +613,14 @@ class PerceiverStrucPerc(nn.Module):
         attn_drop_rate: float = 0.0,
         drop_path_rate: float = 0.0,
         init_values: Optional[float] = 1e-5,
-        rope_base: float = 100.0,
-        rope_scale: str = "latent",
+        # 2D RoPE (DINOv3-style)
+        rope_base: Optional[float] = 100.0,
+        rope_min_period: Optional[float] = None,
+        rope_max_period: Optional[float] = None,
+        rope_normalize_coords: Literal["min", "max", "separate"] = "separate",
+        rope_shift_coords: Optional[float] = None,
+        rope_jitter_coords: Optional[float] = None,
+        rope_rescale_coords: Optional[float] = None,
     ) -> None:
         super().__init__()
         if depth_outer < 1:
@@ -532,7 +643,6 @@ class PerceiverStrucPerc(nn.Module):
         self.depth_outer = int(depth_outer)
         self.num_cross_blocks = int(num_cross_blocks)
         self.num_self_blocks = int(num_self_blocks)
-        self.rope_scale = rope_scale
 
         # Compatibility shims for the existing MaskedVisionTransformerTIMM/
         # Lightning code paths that probe attributes on ``vit``.
@@ -567,8 +677,18 @@ class PerceiverStrucPerc(nn.Module):
         else:
             self.reg_token = None
 
-        # 2D RoPE (shared across all attention layers).
-        self.rope = RoPE2D(head_dim=self.head_dim, base=rope_base)
+        # 2D RoPE (shared across all attention layers; only the parent
+        # Perceiver owns the ``periods`` buffer).
+        self.rope = RopePositionEmbedding(
+            head_dim=self.head_dim,
+            base=rope_base,
+            min_period=rope_min_period,
+            max_period=rope_max_period,
+            normalize_coords=rope_normalize_coords,
+            shift_coords=rope_shift_coords,
+            jitter_coords=rope_jitter_coords,
+            rescale_coords=rope_rescale_coords,
+        )
 
         # Drop path schedule (uniform across cross + self blocks initially).
         total_blocks = self.num_cross_blocks * self.depth_outer + self.num_self_blocks
@@ -580,7 +700,6 @@ class PerceiverStrucPerc(nn.Module):
                 CrossAttentionBlock(
                     dim=embed_dim,
                     num_heads=num_heads,
-                    rope=self.rope,
                     mlp_ratio=mlp_ratio,
                     qkv_bias=qkv_bias,
                     drop=drop_rate,
@@ -600,7 +719,6 @@ class PerceiverStrucPerc(nn.Module):
                 SelfAttentionBlock(
                     dim=embed_dim,
                     num_heads=num_heads,
-                    rope=self.rope,
                     mlp_ratio=mlp_ratio,
                     qkv_bias=qkv_bias,
                     drop=drop_rate,
@@ -618,9 +736,6 @@ class PerceiverStrucPerc(nn.Module):
         self.norm_pre = nn.Identity()
         self.pos_drop = nn.Identity()
 
-        # Pre-compute and register positions (in latent-cell units).
-        self._build_positions()
-
         self.apply(_init_weights)
 
     # Compatibility alias used by code that iterates ``vit.blocks`` (e.g.
@@ -632,94 +747,45 @@ class PerceiverStrucPerc(nn.Module):
         return self.self_blocks
 
     # ------------------------------------------------------------------
-    # Positions
+    # RoPE helpers
     # ------------------------------------------------------------------
 
-    def _build_positions(self) -> None:
-        """Pre-compute the latent grid positions (fixed at init).
+    def _compute_q_kv_sincos(
+        self, h_in: int, w_in: int
+    ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
+        """Compute matched ``(sin, cos)`` for the latent and input grids.
 
-        Input positions depend on the actual conv output grid (which differs
-        between global and local crops), so they are computed on the fly in
-        :meth:`_compute_input_pos`. Only the latent grid is cached here.
+        A single augmentation state is sampled and reused for both grids so
+        that the relative spatial geometry between latent queries and input
+        keys/values is preserved (otherwise ``shift`` / ``jitter`` /
+        ``rescale`` would create independent perturbations).
         """
-        latent_h, latent_w = self.latent_size
-        if self.rope_scale in ("latent", "input"):
-            lat_y = torch.arange(latent_h, dtype=torch.float32) + 0.5
-            lat_x = torch.arange(latent_w, dtype=torch.float32) + 0.5
-            if self.rope_scale == "input":
-                # Latent grid is rescaled to match the configured input grid.
-                input_h, input_w = self.patch_embed.input_grid_size
-                lat_y = lat_y * (input_h / latent_h)
-                lat_x = lat_x * (input_w / latent_w)
-        elif self.rope_scale == "normalized":
-            lat_y = (torch.arange(latent_h, dtype=torch.float32) + 0.5) / latent_h
-            lat_x = (torch.arange(latent_w, dtype=torch.float32) + 0.5) / latent_w
-        else:
-            raise ValueError(
-                f"Unknown rope_scale={self.rope_scale!r}. "
-                "Expected one of: 'latent', 'input', 'normalized'."
-            )
+        device = self.rope.periods.device
+        dtype = self.rope.dtype
+        augment_state = self.rope.sample_augment_state(device, dtype)
 
-        yy_lat, xx_lat = torch.meshgrid(lat_y, lat_x, indexing="ij")
-        latent_pos = torch.stack([xx_lat, yy_lat], dim=-1).reshape(-1, 2)
-
-        # Persistent so the values survive ``from_pretrained`` round-trips
-        # (HF meta-init only fills tensors present in the saved state dict).
-        self.register_buffer("latent_pos", latent_pos, persistent=True)
-
-    def _compute_input_pos(
-        self, input_h: int, input_w: int, device: torch.device, dtype: torch.dtype
-    ) -> Tensor:
-        """Compute input-token positions for an arbitrary (h, w) grid.
-
-        Each crop is treated as a standalone image: the input grid spans
-        ``[0, latent_W]`` (or whichever scale ``rope_scale`` selects)
-        regardless of the crop's absolute size. This is what we want for the
-        DINOv2 multi-crop pipeline where local crops should attend to the
-        full latent grid the same way global crops do.
-        """
-        latent_h, latent_w = self.latent_size
-
-        if self.rope_scale == "latent":
-            in_y = (torch.arange(input_h, device=device, dtype=dtype) + 0.5) * (
-                latent_h / input_h
-            )
-            in_x = (torch.arange(input_w, device=device, dtype=dtype) + 0.5) * (
-                latent_w / input_w
-            )
-        elif self.rope_scale == "input":
-            in_y = torch.arange(input_h, device=device, dtype=dtype) + 0.5
-            in_x = torch.arange(input_w, device=device, dtype=dtype) + 0.5
-        elif self.rope_scale == "normalized":
-            in_y = (torch.arange(input_h, device=device, dtype=dtype) + 0.5) / input_h
-            in_x = (torch.arange(input_w, device=device, dtype=dtype) + 0.5) / input_w
-        else:
-            raise ValueError(
-                f"Unknown rope_scale={self.rope_scale!r}. "
-                "Expected one of: 'latent', 'input', 'normalized'."
-            )
-
-        yy_in, xx_in = torch.meshgrid(in_y, in_x, indexing="ij")
-        return torch.stack([xx_in, yy_in], dim=-1).reshape(-1, 2)
-
-    # ------------------------------------------------------------------
-    # Forward helpers
-    # ------------------------------------------------------------------
-
-    def _q_positions(self, batch_size: int) -> Tensor:
-        """Positions for prefix + latent queries (prefix entries are zeros)."""
-        n_prefix = self.num_prefix_tokens
-        prefix_pos = self.latent_pos.new_zeros(n_prefix, 2)
-        full = torch.cat([prefix_pos, self.latent_pos], dim=0)  # (n_prefix + L, 2)
-        return full.unsqueeze(0).expand(batch_size, -1, -1)
-
-    def _kv_positions(
-        self, batch_size: int, input_h: int, input_w: int
-    ) -> Tensor:
-        pos = self._compute_input_pos(
-            input_h, input_w, device=self.latent_pos.device, dtype=self.latent_pos.dtype
+        q_sin, q_cos = self.rope(
+            H=self.latent_h, W=self.latent_w, augment_state=augment_state
         )
-        return pos.unsqueeze(0).expand(batch_size, -1, -1)
+        # Identity rotation for prefix (CLS + register) tokens.
+        q_sin, q_cos = pad_sincos_for_prefix(q_sin, q_cos, self.num_prefix_tokens)
+
+        kv_sin, kv_cos = self.rope(H=h_in, W=w_in, augment_state=augment_state)
+        return (q_sin, q_cos), (kv_sin, kv_cos)
+
+    def _compute_self_sincos(
+        self, augment_state: Optional[_AugmentState] = None
+    ) -> Tuple[Tensor, Tensor]:
+        """``(sin, cos)`` for the latent grid (with prefix padding).
+
+        Used by latent self-attention. Reuses an augmentation state if
+        provided so the latent self-attention shares the same perturbation
+        as the cross-attention before it.
+        """
+        sin, cos = self.rope(
+            H=self.latent_h, W=self.latent_w, augment_state=augment_state
+        )
+        return pad_sincos_for_prefix(sin, cos, self.num_prefix_tokens)
 
     def build_initial_queries(self, batch_size: int) -> Tensor:
         """Construct the initial (prefix + latent) query tokens."""
@@ -758,31 +824,22 @@ class PerceiverStrucPerc(nn.Module):
             raise ValueError("mask_token must be provided when mask is not None.")
 
         B = images.shape[0]
-        n_prefix = self.num_prefix_tokens
 
         in_tokens, (h_in, w_in) = self.patch_embed(images)  # (B, N_in, D)
         q = self.build_initial_queries(B)  # (B, n_prefix + L, D)
-        full_q_pos = self._q_positions(B)
-        kv_pos = self._kv_positions(B, h_in, w_in)
+        q_sincos, kv_sincos = self._compute_q_kv_sincos(h_in, w_in)
 
         intermediates: List[Tensor] = []
         mask_applied = False
 
         if self.depth_outer == 1:
             for blk in self.cross_blocks:
-                q = blk(
-                    q,
-                    in_tokens,
-                    full_q_pos,
-                    kv_pos,
-                    q_prefix_count=n_prefix,
-                    kv_prefix_count=0,
-                )
+                q = blk(q, in_tokens, q_sincos, kv_sincos)
             if mask is not None:
                 q = _apply_mask_token(q, mask, mask_token)
                 mask_applied = True
             for blk in self.self_blocks:
-                q = blk(q, full_q_pos, prefix_count=n_prefix)
+                q = blk(q, q_sincos)
                 if return_intermediates:
                     intermediates.append(q)
         else:
@@ -796,12 +853,7 @@ class PerceiverStrucPerc(nn.Module):
             for outer in range(self.depth_outer):
                 for _ in range(self.num_cross_blocks):
                     q = self.cross_blocks[cross_idx](
-                        q,
-                        in_tokens,
-                        full_q_pos,
-                        kv_pos,
-                        q_prefix_count=n_prefix,
-                        kv_prefix_count=0,
+                        q, in_tokens, q_sincos, kv_sincos
                     )
                     cross_idx += 1
                     if mask is not None and not mask_applied:
@@ -809,7 +861,7 @@ class PerceiverStrucPerc(nn.Module):
                         mask_applied = True
                 this_outer = self_per_outer + (1 if outer < remainder else 0)
                 for _ in range(this_outer):
-                    q = self.self_blocks[self_idx](q, full_q_pos, prefix_count=n_prefix)
+                    q = self.self_blocks[self_idx](q, q_sincos)
                     if return_intermediates:
                         intermediates.append(q)
                     self_idx += 1
@@ -824,7 +876,6 @@ class PerceiverStrucPerc(nn.Module):
     def last_selfattention(self, images: Tensor) -> Tensor:
         """Return softmax attention probs of the last self-attention block."""
         B = images.shape[0]
-        n_prefix = self.num_prefix_tokens
 
         if len(self.self_blocks) == 0:
             raise RuntimeError(
@@ -833,24 +884,14 @@ class PerceiverStrucPerc(nn.Module):
 
         in_tokens, (h_in, w_in) = self.patch_embed(images)
         q = self.build_initial_queries(B)
-        full_q_pos = self._q_positions(B)
-        kv_pos = self._kv_positions(B, h_in, w_in)
+        q_sincos, kv_sincos = self._compute_q_kv_sincos(h_in, w_in)
 
         if self.depth_outer == 1:
             for blk in self.cross_blocks:
-                q = blk(
-                    q,
-                    in_tokens,
-                    full_q_pos,
-                    kv_pos,
-                    q_prefix_count=n_prefix,
-                    kv_prefix_count=0,
-                )
+                q = blk(q, in_tokens, q_sincos, kv_sincos)
             for blk in self.self_blocks[:-1]:
-                q = blk(q, full_q_pos, prefix_count=n_prefix)
-            return self.self_blocks[-1](
-                q, full_q_pos, prefix_count=n_prefix, return_attn=True
-            )
+                q = blk(q, q_sincos)
+            return self.self_blocks[-1](q, q_sincos, return_attn=True)
 
         # Iterated mode: replay the full pipeline up to the last self block.
         self_per_outer, remainder = divmod(self.num_self_blocks, self.depth_outer)
@@ -859,22 +900,15 @@ class PerceiverStrucPerc(nn.Module):
         last_block = self.self_blocks[-1]
         for outer in range(self.depth_outer):
             for _ in range(self.num_cross_blocks):
-                q = self.cross_blocks[cross_idx](
-                    q,
-                    in_tokens,
-                    full_q_pos,
-                    kv_pos,
-                    q_prefix_count=n_prefix,
-                    kv_prefix_count=0,
-                )
+                q = self.cross_blocks[cross_idx](q, in_tokens, q_sincos, kv_sincos)
                 cross_idx += 1
             this_outer = self_per_outer + (1 if outer < remainder else 0)
             for k in range(this_outer):
                 blk = self.self_blocks[self_idx]
                 self_idx += 1
                 if blk is last_block:
-                    return blk(q, full_q_pos, prefix_count=n_prefix, return_attn=True)
-                q = blk(q, full_q_pos, prefix_count=n_prefix)
+                    return blk(q, q_sincos, return_attn=True)
+                q = blk(q, q_sincos)
         raise RuntimeError("Unreachable: failed to reach last self-attention block.")
 
     @torch.no_grad()
@@ -884,19 +918,11 @@ class PerceiverStrucPerc(nn.Module):
         Shape: ``(B, h, n_prefix + L, N_in)``.
         """
         B = images.shape[0]
-        n_prefix = self.num_prefix_tokens
         in_tokens, (h_in, w_in) = self.patch_embed(images)
         q = self.build_initial_queries(B)
-        full_q_pos = self._q_positions(B)
-        kv_pos = self._kv_positions(B, h_in, w_in)
+        q_sincos, kv_sincos = self._compute_q_kv_sincos(h_in, w_in)
         return self.cross_blocks[0](
-            q,
-            in_tokens,
-            full_q_pos,
-            kv_pos,
-            q_prefix_count=n_prefix,
-            kv_prefix_count=0,
-            return_attn=True,
+            q, in_tokens, q_sincos, kv_sincos, return_attn=True
         )
 
 
@@ -1098,8 +1124,6 @@ def update_drop_path_rate(
     blocks = list(perceiver.cross_blocks) + list(perceiver.self_blocks)
     total = len(blocks)
     if mode == "linear":
-        import numpy as np
-
         probs = np.linspace(0, drop_path_rate, total).tolist()
     elif mode == "uniform":
         probs = [drop_path_rate for _ in range(total)]
@@ -1143,7 +1167,12 @@ def _build_perceiver_from_config(cfg: Dict[str, Any]) -> PerceiverStrucPerc:
         drop_path_rate=0.0,  # student gets drop path applied separately
         init_values=cfg.get("init_values", 1e-5),
         rope_base=cfg.get("rope_base", 100.0),
-        rope_scale=cfg.get("rope_scale", "latent"),
+        rope_min_period=cfg.get("rope_min_period", None),
+        rope_max_period=cfg.get("rope_max_period", None),
+        rope_normalize_coords=cfg.get("rope_normalize_coords", "separate"),
+        rope_shift_coords=cfg.get("rope_shift_coords", None),
+        rope_jitter_coords=cfg.get("rope_jitter_coords", None),
+        rope_rescale_coords=cfg.get("rope_rescale_coords", None),
     )
 
 
@@ -1258,7 +1287,10 @@ if __name__ == "__main__":
             "mlp_ratio": 4.0,
             "drop_path_rate": 0.1,
             "rope_base": 100.0,
-            "rope_scale": "latent",
+            "rope_normalize_coords": "separate",
+            "rope_shift_coords": 0.5,
+            "rope_jitter_coords": 2.0,
+            "rope_rescale_coords": 2.0,
         },
     }
     dino_head_config = {
@@ -1299,3 +1331,26 @@ if __name__ == "__main__":
     attn_cls = model.teacher_backbone.get_cls_attention_map(x, head_fusion="mean")
     print("last self attn:", attn_self.shape)
     print("cls attn map:", attn_cls.shape)
+
+    # Variable input size (mimics local crop in DINOv2 multi-crop training).
+    x_small = torch.randn(2, 5, 24, 24)
+    cls_small = model(x_small)
+    print("small forward (CLS):", cls_small.shape)
+    attn_small = model.teacher_backbone.get_cls_attention_map(
+        x_small, head_fusion="none"
+    )
+    print("small cls attn map:", attn_small.shape)
+
+    # Eval mode: augmentations should not be sampled (deterministic).
+    model.eval()
+    cls_a = model(x)
+    cls_b = model(x)
+    assert torch.allclose(cls_a, cls_b), "RoPE augment leaked into eval mode."
+    print("eval determinism: OK")
+
+    # Train mode with augmentations: sin/cos must change between calls.
+    model.train()
+    sin1, cos1 = model.teacher_backbone.vit.rope(H=10, W=10)
+    sin2, cos2 = model.teacher_backbone.vit.rope(H=10, W=10)
+    assert not torch.allclose(sin1, sin2), "RoPE augment did not vary in train mode."
+    print("train RoPE augment varies: OK")

@@ -32,9 +32,19 @@ architecture:
       init_values: 1.0e-5
       qkv_bias: true
       qk_norm: false
-      # 2D RoPE
+      # 2D RoPE (DINOv3-style). Use either ``rope_base`` OR
+      # ``rope_min_period`` + ``rope_max_period`` (not both).
       rope_base: 100.0
-      rope_scale: latent     # 'latent' | 'input' | 'normalized'
+      rope_min_period: null
+      rope_max_period: null
+      rope_normalize_coords: separate  # 'min' | 'max' | 'separate'
+      # Train-time coordinate augmentations (set to null to disable). The
+      # same sampled state is shared between Q (latents) and KV (input
+      # tokens) of every cross-attention call so relative geometry is
+      # preserved.
+      rope_shift_coords: null    # e.g. 0.5  (uniform shift in [-s, +s])
+      rope_jitter_coords: null   # e.g. 2.0  (log-uniform per-axis scale)
+      rope_rescale_coords: null  # e.g. 2.0  (log-uniform isotropic scale)
   # DINO head parameters
   dino_head:
     embed_dim: 64
