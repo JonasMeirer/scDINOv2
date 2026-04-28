@@ -25,6 +25,17 @@ class ScDINOConfig(PretrainedConfig):
         reg_tokens: int = 8,
         # ResNet parameters (DINO only)
         stem_width: int = 32,
+        # Perceiver / StrucPerc parameters (model_variant="dinov2_StrucPerc")
+        latent_h: int = 25,
+        latent_w: int = 25,
+        num_self_blocks: int = 8,
+        num_cross_blocks: int = 1,
+        depth_outer: int = 1,
+        rope_base: float = 100.0,
+        rope_scale: str = "latent",
+        init_values: float = 1e-5,
+        qkv_bias: bool = True,
+        qk_norm: bool = False,
         **kwargs,
     ):
         self.model_variant = model_variant
@@ -38,4 +49,15 @@ class ScDINOConfig(PretrainedConfig):
         self.mlp_ratio = mlp_ratio
         self.reg_tokens = reg_tokens
         self.stem_width = stem_width
+        # Perceiver / StrucPerc fields
+        self.latent_h = latent_h
+        self.latent_w = latent_w
+        self.num_self_blocks = num_self_blocks
+        self.num_cross_blocks = num_cross_blocks
+        self.depth_outer = depth_outer
+        self.rope_base = rope_base
+        self.rope_scale = rope_scale
+        self.init_values = init_values
+        self.qkv_bias = qkv_bias
+        self.qk_norm = qk_norm
         super().__init__(**kwargs)

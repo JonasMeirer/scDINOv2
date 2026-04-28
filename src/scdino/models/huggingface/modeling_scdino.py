@@ -8,6 +8,10 @@ from timm.models.vision_transformer import VisionTransformer
 from timm.models.resnet import ResNet, BasicBlock
 
 from src.scdino.models.backbones.dinov2 import MaskedVisionTransformerTIMM
+from src.scdino.models.backbones.dinov2_StrucPerc import (
+    MaskedPerceiverStrucPerc,
+    PerceiverStrucPerc,
+)
 from src.scdino.models.huggingface.configuration_scdino import ScDINOConfig
 
 
@@ -44,6 +48,30 @@ class ScDINOModel(PreTrainedModel):
                 weight_initialization="skip",
                 pos_embed_initialization="skip",
             )
+
+        elif config.model_variant == "dinov2_StrucPerc":
+            perceiver = PerceiverStrucPerc(
+                in_chans=config.in_chans,
+                img_size=config.img_size,
+                patch_size=config.patch_size,
+                embed_dim=config.embed_dim,
+                num_heads=config.num_heads,
+                latent_size=(config.latent_h, config.latent_w),
+                num_self_blocks=config.num_self_blocks,
+                num_cross_blocks=config.num_cross_blocks,
+                depth_outer=config.depth_outer,
+                reg_tokens=config.reg_tokens,
+                mlp_ratio=config.mlp_ratio,
+                qkv_bias=config.qkv_bias,
+                qk_norm=config.qk_norm,
+                drop_rate=0.0,
+                attn_drop_rate=0.0,
+                drop_path_rate=0.0,
+                init_values=config.init_values,
+                rope_base=config.rope_base,
+                rope_scale=config.rope_scale,
+            )
+            self.backbone = MaskedPerceiverStrucPerc(perceiver=perceiver)
 
         elif config.model_variant == "dino":
             if config.backbone_type == "vit":
@@ -99,7 +127,7 @@ class ScDINOModel(PreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
-        if self.config.model_variant == "dinov2":
+        if self.config.model_variant in ("dinov2", "dinov2_StrucPerc"):
             last_hidden_state = self.backbone.encode(pixel_values)
             pooler_output = last_hidden_state[:, 0]
 
