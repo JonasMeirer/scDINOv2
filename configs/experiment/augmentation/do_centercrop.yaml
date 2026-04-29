@@ -1,5 +1,5 @@
 # @package _global_
-# Ablation: all augmentations disabled (only random crops + normalize).
+# Ablation: Change to center crop
 
 defaults:
   - override /model: dinov2
