@@ -22,8 +22,10 @@ from src.scdino.models.huggingface.configuration_scdino import ScDINOConfig
 class ScDINOModel(PreTrainedModel):
     """HuggingFace-compatible wrapper around the ScDINO teacher backbone.
 
-    Supports both DINO (ViT / ResNet) and DINOv2 (MaskedVisionTransformerTIMM)
-    backbones for inference.
+    Supports DINO (ViT / ResNet), DINOv2 (TIMM ``MaskedVisionTransformerTIMM``),
+    DINOv2-StrucPerc (Perceiver-style with structured latent grid) and
+    DINOv3 (DINOv3 ``DinoVisionTransformer`` wrapped in
+    :class:`MaskedDinoVisionTransformer`) backbones for inference.
     """
 
     config_class = ScDINOConfig
@@ -64,14 +66,20 @@ class ScDINOModel(PreTrainedModel):
                 num_self_blocks=config.num_self_blocks,
                 num_cross_blocks=config.num_cross_blocks,
                 depth_outer=config.depth_outer,
-                reg_tokens=config.reg_tokens,
-                mlp_ratio=config.mlp_ratio,
+                # ``reg_tokens`` is the canonical HF config name; the
+                # perceiver constructor uses the dinov3-style synonym.
+                n_storage_tokens=config.reg_tokens,
+                ffn_ratio=config.mlp_ratio,
                 qkv_bias=config.qkv_bias,
-                qk_norm=config.qk_norm,
+                proj_bias=config.proj_bias,
+                ffn_bias=config.ffn_bias,
+                mask_k_bias=config.mask_k_bias,
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
                 drop_path_rate=0.0,
-                init_values=config.init_values,
+                layerscale_init=config.init_values,
+                norm_layer=config.norm_layer,
+                ffn_layer=config.ffn_layer,
                 rope_base=config.rope_base,
                 rope_min_period=config.rope_min_period,
                 rope_max_period=config.rope_max_period,
@@ -79,32 +87,32 @@ class ScDINOModel(PreTrainedModel):
                 rope_shift_coords=config.rope_shift_coords,
                 rope_jitter_coords=config.rope_jitter_coords,
                 rope_rescale_coords=config.rope_rescale_coords,
+                rope_dtype=config.rope_dtype,
             )
             self.backbone = MaskedPerceiverStrucPerc(perceiver=perceiver)
 
         elif config.model_variant == "dinov3":
             vit = DinoVisionTransformer(
+                in_chans=config.in_chans,
                 img_size=config.img_size,
                 patch_size=config.patch_size,
-                in_chans=config.in_chans,
                 embed_dim=config.embed_dim,
                 depth=config.depth,
                 num_heads=config.num_heads,
                 ffn_ratio=config.mlp_ratio,
+                n_storage_tokens=config.reg_tokens,
                 qkv_bias=config.qkv_bias,
                 proj_bias=config.proj_bias,
                 ffn_bias=config.ffn_bias,
+                mask_k_bias=config.mask_k_bias,
                 drop_path_rate=0.0,
                 layerscale_init=config.init_values,
                 norm_layer=config.norm_layer,
                 ffn_layer=config.ffn_layer,
-                n_storage_tokens=config.reg_tokens,
-                mask_k_bias=config.mask_k_bias,
                 untie_cls_and_patch_norms=config.untie_cls_and_patch_norms,
                 untie_global_and_local_cls_norm=(
                     config.untie_global_and_local_cls_norm
                 ),
-                # 2D RoPE
                 pos_embed_rope_base=config.rope_base,
                 pos_embed_rope_min_period=config.rope_min_period,
                 pos_embed_rope_max_period=config.rope_max_period,
@@ -114,6 +122,7 @@ class ScDINOModel(PreTrainedModel):
                 pos_embed_rope_rescale_coords=config.rope_rescale_coords,
                 pos_embed_rope_dtype=config.rope_dtype,
             )
+            vit.init_weights()
             self.backbone = MaskedDinoVisionTransformer(vit=vit)
 
         elif config.model_variant == "dino":
@@ -156,7 +165,7 @@ class ScDINOModel(PreTrainedModel):
         else:
             raise ValueError(
                 f"Unsupported model_variant={config.model_variant!r}. "
-                f"Expected 'dino' or 'dinov2'."
+                f"Expected one of 'dino', 'dinov2', 'dinov2_StrucPerc', 'dinov3'."
             )
 
         self.post_init()
@@ -170,7 +179,11 @@ class ScDINOModel(PreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
-        if self.config.model_variant in ("dinov2", "dinov2_StrucPerc", "dinov3"):
+        if self.config.model_variant in (
+            "dinov2",
+            "dinov2_StrucPerc",
+            "dinov3",
+        ):
             last_hidden_state = self.backbone.encode(pixel_values)
             pooler_output = last_hidden_state[:, 0]
 
