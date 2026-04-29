@@ -1,0 +1,123 @@
+# DINOv2 StrucPerc Model Configuration
+# Perceiver-style backbone with a spatially structured latent grid + 2D RoPE.
+_target_: src.scdino.models.lightning.dinov2_StrucPerc.DINOv2StrucPerc
+
+name: "dinov2_StrucPerc"
+
+# Model architecture parameters
+architecture:
+  backbone:
+    type: perceiver
+    perceiver:
+      # Input branch
+      in_chans: 5
+      img_size: 50
+      patch_size: 1          # input grid: 50x50
+      # Token / attention sizes
+      embed_dim: 64
+      num_heads: 8
+      ffn_ratio: 3
+      # Latent grid (spatially structured)
+      latent_size: [10, 10]  # latent grid: 25x25
+      # Block layout
+      num_self_blocks: 8
+      num_cross_blocks: 8
+      depth_outer: 1         # 1 => single cross + N self; >1 => iterated
+      # Storage / register tokens (CLS is always present)
+      n_storage_tokens: 4
+      # Block / norm / FFN choices (DINOv3-aligned)
+      norm_layer: layernormbf16  # 'layernorm' | 'layernormbf16' | 'rmsnorm'
+      ffn_layer: swiglu         # 'mlp' | 'swiglu' | 'swiglu32' | 'swiglu64' | 'swiglu128'
+      qkv_bias: false
+      proj_bias: true
+      ffn_bias: true
+      # ``mask_k_bias`` only applies to the latent self-attention blocks
+      # (zeroes the K-bias of the fused QKV linear); cross-attention
+      # uses a 2-chunk KV linear and ignores this knob.
+      mask_k_bias: false
+      # Regularisation
+      drop_rate: 0.0
+      attn_drop_rate: 0.0
+      drop_path_rate: 0.1
+      layerscale_init: 1.0e-5
+      # 2D RoPE (DINOv3-style). Use either ``rope_base`` OR
+      # ``rope_min_period`` + ``rope_max_period`` (not both).
+      rope_base: 100.0
+      rope_min_period: null
+      rope_max_period: null
+      rope_normalize_coords: separate  # 'min' | 'max' | 'separate'
+      # Train-time coordinate augmentations (set to null to disable). The
+      # same sampled state is shared between Q (latents) and KV (input
+      # tokens) of every cross-attention call so relative geometry is
+      # preserved.
+      rope_shift_coords: null    # e.g. 0.5  (uniform shift in [-s, +s])
+      rope_jitter_coords: null   # e.g. 2.0  (log-uniform per-axis scale)
+      rope_rescale_coords: 2  # e.g. 2.0  (log-uniform isotropic scale)
+      rope_dtype: fp32           # 'fp32' | 'fp16' | 'bf16'
+  # DINO head parameters
+  dino_head:
+    embed_dim: 64
+    hidden_dim: 128
+    bottleneck_dim: 32
+    output_dim: 2048
+    batch_norm: false
+  # IBOT head parameters
+  ibot_head:
+    embed_dim: 64
+    hidden_dim: 128
+    bottleneck_dim: 32
+    output_dim: 2048
+    batch_norm: false
+  # Model behavior
+  ibot_separate_head: false
+
+
+training:
+  # Trainer parameters
+  max_epochs: 20
+  # Optimizer parameters
+  optimizer:
+    lr: 8e-04
+  # Teacher temperature schedule
+  teacher_temp:
+    warmup_steps: 30
+    start_value: 0.04
+    end_value: 0.07
+  # Weight decay schedule
+  weight_decay:
+    start_value: 0.001
+    end_value: 0.01
+  # Momentum schedule
+  momentum:
+    start_value: 0.992
+    end_value: 1.0
+  # Loss function parameters
+  losses:
+    dino:
+      output_dim: 2048
+      warmup_teacher_temp: 0.04
+      teacher_temp: 0.04
+      warmup_teacher_temp_epochs: 30
+      student_temp: 0.1
+      center_momentum: 0.9
+      center_mode: "mean"
+      weight: 1.0
+    ibot:
+      output_dim: 2048
+      teacher_temp: 0.04
+      student_temp: 0.1
+      center_mode: "mean"
+      center_momentum: 0.9
+      weight: 1.0
+    koleo:
+      p: 2
+      eps: 1e-8
+      weight: 0.1
+  # kNN evaluation parameters
+  knn_eval:
+    enable_knn_eval: true
+    knn_k: 20
+    knn_temperature: 0.07
+    knn_max_train_batches: 1000
+    knn_val_chunk_size: 1024
+    knn_train_chunk_size: 50000
