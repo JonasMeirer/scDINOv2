@@ -1,345 +1,115 @@
-"""StrucPerc DINOv2 backbone.
+"""StrucPerc DINOv2 backbone — DINOv3-aligned design.
 
 A Perceiver-style vision encoder for the scDINO codebase.
 
 Differences vs. the standard ViT (``dinov2.py``):
 
-* The input image is patch-embedded onto a (potentially large) input grid, e.g.
-  ``input_grid = (50, 50)`` with ``patch_size=1`` on a 50x50 image.
+* The input image is patch-embedded onto a (potentially large) input grid,
+  e.g. ``input_grid = (50, 50)`` with ``patch_size=1`` on a 50x50 image.
 * A learnable bank of latent tokens lives on a smaller, configurable
   spatial grid (e.g. ``latent_size = (25, 25)``).
-* Cross-attention with axial 2D RoPE on Q/K (V is **not** rotated) is used to
-  let the latent queries attend to input keys/values. Both grids are expressed
-  in *latent-cell units* so the relative offset between a latent token at
-  ``(x_l, y_l)`` and an input token at ``(x_i, y_i)`` has a natural meaning.
-* Latent self-attention blocks (also with 2D RoPE on Q/K) refine the latent
-  representation. CLS and register tokens are concatenated with the latent
-  tokens but RoPE is forced to identity on them (no spatial position).
+* Cross-attention with axial 2D RoPE on Q/K (V is **not** rotated) lets
+  the latent queries attend to input keys/values. A single sampled
+  augmentation state is shared between the latent Q grid and the input
+  KV grid so their relative geometry is preserved.
+* Latent self-attention blocks (also with 2D RoPE on Q/K) refine the
+  latent representation. CLS and storage tokens are concatenated with the
+  latent tokens; their RoPE rotation is the identity (no spatial position).
 * iBOT masking lives at the **latent** grid: masked latent positions are
   replaced with ``mask_token`` after the first cross-attention block and
-  before the latent self-attention stack. This makes the wrapper a drop-in
-  replacement for ``MaskedVisionTransformerTIMM`` w.r.t. the existing
-  Lightning training step.
+  before the latent self-attention stack. This keeps the wrapper a
+  drop-in replacement for ``MaskedVisionTransformerTIMM`` w.r.t. the
+  existing Lightning training step.
+
+Apart from the Perceiver-specific cross-attention path, this module
+delegates as much as possible to DINOv3's components
+(:mod:`src.scdino.models.backbones.dinov3`): the inner self-attention
+blocks, the FFN classes (Mlp / SwiGLU variants), the norm classes
+(LayerNorm / LayerNormBF16 / RMSNorm), the patch embedding, the
+``RopePositionEmbedding``, ``LayerScale``, and the weight initialisation
+(``init_weights_vit`` via ``named_apply``).
 
 This module exposes:
 
-* ``RoPE2D``, ``MultiHeadAttentionRoPE2D``, ``CrossAttentionBlock``,
-  ``SelfAttentionBlock`` (low-level building blocks).
-* ``PerceiverPatchEmbed``, ``PerceiverStrucPerc`` (the inner backbone that
-  also acts as the ``vit`` namespace expected by the rest of the codebase).
+* ``CrossAttention``, ``CrossAttentionBlock`` (Perceiver-only).
+* ``PerceiverPatchEmbed`` (subclass of DINOv3 ``PatchEmbed``; reports the
+  **latent** grid as ``grid_size`` so iBOT masking targets latent tokens).
+* ``PerceiverStrucPerc`` (the inner backbone, also exposed as the ``vit``
+  namespace expected elsewhere in the codebase).
 * ``MaskedPerceiverStrucPerc`` (mirrors ``MaskedVisionTransformerTIMM``).
-* ``DINOv2StrucPerc`` (mirrors ``DINOv2`` and reuses the existing
-  projection-head infrastructure).
+* ``DINOv2StrucPerc`` (top-level model with teacher/student backbones +
+  reused projection heads).
 """
 
 from __future__ import annotations
 
 import copy
 import math
+from functools import partial
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
-from torch.nn import Identity, LayerNorm, Linear, Module, Parameter
-
-from timm.layers import DropPath, Mlp
-
-try:
-    from timm.models.vision_transformer import LayerScale
-except ImportError:  # pragma: no cover - very old timm
-    class LayerScale(nn.Module):
-        def __init__(
-            self, dim: int, init_values: float = 1e-5, inplace: bool = False
-        ) -> None:
-            super().__init__()
-            self.inplace = inplace
-            self.gamma = nn.Parameter(init_values * torch.ones(dim))
-
-        def forward(self, x: Tensor) -> Tensor:
-            return x.mul_(self.gamma) if self.inplace else x * self.gamma
-
+from torch.nn import Parameter
 
 from src.scdino.models.backbones.dinov2 import (
     DINOv2Head,
     DINOv2ProjectionHead,
     freeze_eval_module,
 )
+from src.scdino.models.backbones.dinov3 import (
+    LayerScale,
+    Mlp,
+    PatchEmbed,
+    RopePositionEmbedding,
+    SelfAttentionBlock,
+    dtype_dict,
+    ffn_layer_dict,
+    init_weights_vit,
+    make_2tuple,
+    named_apply,
+    norm_layer_dict,
+    rope_apply,
+)
 
 
 # ---------------------------------------------------------------------------
-# 2D RoPE
+# Cross-attention (Perceiver-only)
 # ---------------------------------------------------------------------------
 
 
-_AugmentState = Tuple[Optional[Tensor], Optional[Tensor], Optional[Tensor]]
+class CrossAttention(nn.Module):
+    """Multi-head cross-attention with 2D RoPE on Q and K.
 
+    Mirrors :class:`src.scdino.models.backbones.dinov3.SelfAttention` as
+    closely as possible:
 
-class RopePositionEmbedding(nn.Module):
-    """Axial 2D Rotary Position Embedding (DINOv3-style).
+    * Same fused-projection style — a single ``kv`` ``Linear(dim, 2*dim)``
+      for the input branch, mirroring DINOv3's fused ``qkv``.
+    * Same RoPE application via :func:`rope_apply`, with implicit
+      prefix-skipping (any leading tokens whose count exceeds the spatial
+      sin/cos length are treated as identity-rotation, exactly like
+      DINOv3's ``apply_rope``).
+    * Same scaled-dot-product attention backend.
 
-    Closely mirrors the reference implementation from DINOv3's
-    ``RopePositionEmbedding``:
-
-    * Stores ``periods`` of shape ``(D_head // 4,)`` either from a single
-      ``base`` (then ``periods[k] = base ** (2k / (D_head/2))``) or from an
-      explicit ``(min_period, max_period)`` range.
-    * Coordinates live in ``[-1, +1]`` after a per-image normalisation
-      (``"min"`` / ``"max"`` / ``"separate"``).
-    * Per-forward training-time augmentations: ``shift_coords``,
-      ``jitter_coords``, ``rescale_coords``.
-    * Returns ``(sin, cos)`` of shape ``(H * W, D_head)`` ready to be
-      multiplied with ``q`` / ``k`` after expanding over batch and heads.
-
-    The two intentional differences vs. DINOv3:
-
-    * ``forward`` accepts an optional ``augment_state`` so that a single
-      sampled augmentation can be **shared** across two calls (e.g. between
-      the latent Q grid and the input KV grid in cross-attention).
-    * ``head_dim`` is required at construction time (DINOv3 derives it from
-      ``embed_dim`` / ``num_heads``); same constraint, just expressed at the
-      level we instantiate the module.
-    """
-
-    def __init__(
-        self,
-        head_dim: int,
-        *,
-        base: Optional[float] = 100.0,
-        min_period: Optional[float] = None,
-        max_period: Optional[float] = None,
-        normalize_coords: Literal["min", "max", "separate"] = "separate",
-        shift_coords: Optional[float] = None,
-        jitter_coords: Optional[float] = None,
-        rescale_coords: Optional[float] = None,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[torch.device] = None,
-    ) -> None:
-        super().__init__()
-        if head_dim % 4 != 0:
-            raise ValueError(
-                f"RopePositionEmbedding requires head_dim divisible by 4, "
-                f"got {head_dim}."
-            )
-        both_periods = min_period is not None and max_period is not None
-        if (base is None and not both_periods) or (
-            base is not None and both_periods
-        ):
-            raise ValueError(
-                "Either `base` or `min_period`+`max_period` must be provided "
-                "(but not both)."
-            )
-
-        self.head_dim = head_dim
-        self.base = base
-        self.min_period = min_period
-        self.max_period = max_period
-        self.normalize_coords = normalize_coords
-        self.shift_coords = shift_coords
-        self.jitter_coords = jitter_coords
-        self.rescale_coords = rescale_coords
-        # ``dtype`` is stored separately because ``self.periods.dtype`` may
-        # differ once ``.to(...)`` is called by the user.
-        self.dtype = dtype
-
-        # Persistent so HuggingFace ``from_pretrained`` (which uses meta init
-        # and only restores tensors present in the saved state dict) keeps
-        # this buffer initialised, and so that
-        # ``teacher.load_state_dict(student.state_dict())`` works.
-        self.register_buffer(
-            "periods",
-            torch.empty(head_dim // 4, device=device, dtype=dtype),
-            persistent=True,
-        )
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        device = self.periods.device
-        dtype = self.dtype
-        Dq = self.head_dim // 4
-        if self.base is not None:
-            periods = self.base ** (
-                2 * torch.arange(Dq, device=device, dtype=dtype) / (self.head_dim // 2)
-            )
-        else:
-            assert self.min_period is not None and self.max_period is not None
-            base = self.max_period / self.min_period
-            exponents = torch.linspace(0, 1, Dq, device=device, dtype=dtype)
-            periods = base**exponents
-            periods = periods / base
-            periods = periods * self.max_period
-        self.periods.data = periods
-
-    # ------------------------------------------------------------------
-    # Coordinate helpers
-    # ------------------------------------------------------------------
-
-    def sample_augment_state(
-        self, device: torch.device, dtype: Optional[torch.dtype] = None
-    ) -> _AugmentState:
-        """Sample one ``(shift, jitter, rescale)`` triplet for this forward.
-
-        Returns ``(None, None, None)`` if not training or no augmentation
-        is configured.
-        """
-        if not self.training:
-            return (None, None, None)
-        dt = dtype if dtype is not None else self.dtype
-        shift_hw: Optional[Tensor] = None
-        jitter_hw: Optional[Tensor] = None
-        rescale_hw: Optional[Tensor] = None
-        if self.shift_coords is not None:
-            shift_hw = torch.empty(2, device=device, dtype=dt).uniform_(
-                -self.shift_coords, self.shift_coords
-            )
-        if self.jitter_coords is not None:
-            jmax = math.log(self.jitter_coords)
-            jitter_hw = (
-                torch.empty(2, device=device, dtype=dt).uniform_(-jmax, jmax).exp()
-            )
-        if self.rescale_coords is not None:
-            rmax = math.log(self.rescale_coords)
-            rescale_hw = (
-                torch.empty(1, device=device, dtype=dt).uniform_(-rmax, rmax).exp()
-            )
-        return (shift_hw, jitter_hw, rescale_hw)
-
-    def _coords(
-        self,
-        H: int,
-        W: int,
-        device: torch.device,
-        dtype: Optional[torch.dtype],
-        augment_state: _AugmentState,
-    ) -> Tensor:
-        dd = {"device": device, "dtype": dtype}
-        if self.normalize_coords == "max":
-            max_HW = max(H, W)
-            coords_h = torch.arange(0.5, H, **dd) / max_HW
-            coords_w = torch.arange(0.5, W, **dd) / max_HW
-        elif self.normalize_coords == "min":
-            min_HW = min(H, W)
-            coords_h = torch.arange(0.5, H, **dd) / min_HW
-            coords_w = torch.arange(0.5, W, **dd) / min_HW
-        elif self.normalize_coords == "separate":
-            coords_h = torch.arange(0.5, H, **dd) / H
-            coords_w = torch.arange(0.5, W, **dd) / W
-        else:
-            raise ValueError(
-                f"Unknown normalize_coords: {self.normalize_coords!r}."
-            )
-        coords = torch.stack(
-            torch.meshgrid(coords_h, coords_w, indexing="ij"), dim=-1
-        )  # (H, W, 2)
-        coords = coords.flatten(0, 1)  # (HW, 2)
-        coords = 2.0 * coords - 1.0  # [-1, +1]
-
-        shift_hw, jitter_hw, rescale_hw = augment_state
-        if shift_hw is not None:
-            coords = coords + shift_hw[None, :]
-        if jitter_hw is not None:
-            coords = coords * jitter_hw[None, :]
-        if rescale_hw is not None:
-            coords = coords * rescale_hw
-        return coords
-
-    def _coords_to_sincos(self, coords: Tensor) -> Tuple[Tensor, Tensor]:
-        # coords: (HW, 2). periods: (D_head // 4,).
-        periods = self.periods.to(dtype=coords.dtype, device=coords.device)
-        angles = (
-            2 * math.pi * coords[:, :, None] / periods[None, None, :]
-        )  # (HW, 2, D//4)
-        angles = angles.flatten(1, 2)  # (HW, D//2)
-        angles = angles.tile(2)  # (HW, D)
-        return angles.sin(), angles.cos()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def forward(
-        self,
-        *,
-        H: int,
-        W: int,
-        augment_state: Optional[_AugmentState] = None,
-    ) -> Tuple[Tensor, Tensor]:
-        """Compute ``(sin, cos)`` of shape ``(H * W, D_head)`` for an
-        ``H x W`` regular grid.
-
-        If ``augment_state`` is provided it is used as-is so the same
-        translation / jitter / rescale can be shared between Q and KV in
-        cross-attention. Otherwise a fresh state is sampled (training only).
-        """
-        device = self.periods.device
-        dtype = self.dtype
-        if augment_state is None:
-            augment_state = self.sample_augment_state(device, dtype)
-        coords = self._coords(H, W, device, dtype, augment_state)
-        return self._coords_to_sincos(coords)
-
-
-def apply_rotary(x: Tensor, sin: Tensor, cos: Tensor) -> Tensor:
-    """Apply rotary position embedding.
-
-    Args:
-        x: ``(B, h, N, D)``.
-        sin, cos: ``(N, D)`` (will broadcast over batch and heads) or any
-            broadcast-compatible shape.
-
-    Returns:
-        Tensor of shape ``(B, h, N, D)``.
-    """
-    # rotate_half (LLaMA convention): cat(-x2, x1) where x1, x2 = chunk(2).
-    x1, x2 = x.chunk(2, dim=-1)
-    rotated = torch.cat((-x2, x1), dim=-1)
-    # Make sin/cos broadcastable against (B, h, N, D).
-    while sin.dim() < x.dim():
-        sin = sin.unsqueeze(0)
-        cos = cos.unsqueeze(0)
-    return x * cos + rotated * sin
-
-
-def pad_sincos_for_prefix(
-    sin: Tensor, cos: Tensor, n_prefix: int
-) -> Tuple[Tensor, Tensor]:
-    """Prepend identity rotations (sin=0, cos=1) for ``n_prefix`` tokens.
-
-    Used for CLS / register tokens that should not have any spatial RoPE
-    applied to them.
-    """
-    if n_prefix <= 0:
-        return sin, cos
-    pad_sin = sin.new_zeros(n_prefix, sin.shape[-1])
-    pad_cos = cos.new_ones(n_prefix, cos.shape[-1])
-    sin = torch.cat([pad_sin, sin], dim=0)
-    cos = torch.cat([pad_cos, cos], dim=0)
-    return sin, cos
-
-
-# ---------------------------------------------------------------------------
-# Attention modules
-# ---------------------------------------------------------------------------
-
-
-class MultiHeadAttentionRoPE2D(nn.Module):
-    """Multi-head attention with 2D RoPE on Q and K (never on V).
-
-    Pre-computed ``(sin, cos)`` pairs are passed in by the caller — this
-    keeps the shared :class:`RopePositionEmbedding` instance out of every
-    attention block's submodule tree (so the buffer ``periods`` lives only
-    once in the state dict, under the parent Perceiver).
+    The differences are forced by the cross-attention semantics:
+    * Q comes from the latent bank (with prefix CLS / storage tokens),
+      K and V come from the input patch tokens (no prefix).
+    * ``mask_k_bias`` is **not** supported here — the K-bias-masking trick
+      is configured per-block in DINOv3 for the QKV layout. If enabled in
+      the config it only applies to the latent **self-attention** blocks.
     """
 
     def __init__(
         self,
         dim: int,
-        num_heads: int,
-        qkv_bias: bool = True,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        proj_bias: bool = True,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
-        qk_norm: bool = False,
+        device: Any | None = None,
     ) -> None:
         super().__init__()
         if dim % num_heads != 0:
@@ -347,208 +117,222 @@ class MultiHeadAttentionRoPE2D(nn.Module):
                 f"dim ({dim}) must be divisible by num_heads ({num_heads})."
             )
         self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.scale = self.head_dim**-0.5
+        head_dim = dim // num_heads
+        self.scale = head_dim**-0.5
 
-        self.q_proj = nn.Linear(dim, dim, bias=qkv_bias)
-        self.k_proj = nn.Linear(dim, dim, bias=qkv_bias)
-        self.v_proj = nn.Linear(dim, dim, bias=qkv_bias)
+        self.q = nn.Linear(dim, dim, bias=qkv_bias, device=device)
+        self.kv = nn.Linear(dim, dim * 2, bias=qkv_bias, device=device)
 
-        self.q_norm = LayerNorm(self.head_dim) if qk_norm else nn.Identity()
-        self.k_norm = LayerNorm(self.head_dim) if qk_norm else nn.Identity()
-
-        self.attn_drop_p = float(attn_drop)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
+        self.proj = nn.Linear(dim, dim, bias=proj_bias, device=device)
         self.proj_drop = nn.Dropout(proj_drop)
+
+    @staticmethod
+    def _apply_rope_to(
+        x: Tensor, rope: Optional[Tuple[Tensor, Tensor]]
+    ) -> Tensor:
+        """Rotate ``x[:, :, prefix:, :]`` in-place where
+        ``prefix = N - sin.shape[-2]``. Identical bookkeeping to
+        ``SelfAttention.apply_rope`` in dinov3.
+        """
+        if rope is None:
+            return x
+        sin, cos = rope
+        rope_dtype = sin.dtype
+        x_dtype = x.dtype
+        x = x.to(dtype=rope_dtype)
+        N = x.shape[-2]
+        prefix = N - sin.shape[-2]
+        assert prefix >= 0, f"sin has more positions ({sin.shape[-2]}) than tokens ({N})"
+        x_prefix = x[:, :, :prefix, :]
+        x_rot = rope_apply(x[:, :, prefix:, :], sin, cos)
+        x = torch.cat((x_prefix, x_rot), dim=-2)
+        return x.to(dtype=x_dtype)
 
     def forward(
         self,
         q_tokens: Tensor,
         kv_tokens: Tensor,
-        q_sincos: Tuple[Tensor, Tensor],
-        kv_sincos: Tuple[Tensor, Tensor],
+        q_rope: Optional[Tuple[Tensor, Tensor]] = None,
+        kv_rope: Optional[Tuple[Tensor, Tensor]] = None,
         return_attn: bool = False,
     ) -> Tensor:
-        B, Nq, C = q_tokens.shape
-        Nkv = kv_tokens.shape[1]
-        h, d = self.num_heads, self.head_dim
+        B, N_q, C = q_tokens.shape
+        N_kv = kv_tokens.shape[1]
+        h = self.num_heads
+        d = C // h
 
-        q = self.q_proj(q_tokens).view(B, Nq, h, d).permute(0, 2, 1, 3)
-        k = self.k_proj(kv_tokens).view(B, Nkv, h, d).permute(0, 2, 1, 3)
-        v = self.v_proj(kv_tokens).view(B, Nkv, h, d).permute(0, 2, 1, 3)
+        q = self.q(q_tokens).reshape(B, N_q, h, d).transpose(1, 2)  # (B, h, N_q, d)
+        kv = (
+            self.kv(kv_tokens)
+            .reshape(B, N_kv, 2, h, d)
+            .permute(2, 0, 3, 1, 4)
+        )  # (2, B, h, N_kv, d)
+        k, v = torch.unbind(kv, 0)
 
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-
-        q_sin, q_cos = q_sincos
-        k_sin, k_cos = kv_sincos
-        q = apply_rotary(q, q_sin.to(dtype=q.dtype), q_cos.to(dtype=q.dtype))
-        k = apply_rotary(k, k_sin.to(dtype=k.dtype), k_cos.to(dtype=k.dtype))
+        q = self._apply_rope_to(q, q_rope)
+        k = self._apply_rope_to(k, kv_rope)
 
         if return_attn:
             attn = (q @ k.transpose(-2, -1)) * self.scale
             return attn.softmax(dim=-1)
 
-        out = F.scaled_dot_product_attention(
-            q, k, v, dropout_p=self.attn_drop_p if self.training else 0.0
-        )
-        out = out.permute(0, 2, 1, 3).reshape(B, Nq, C)
-        out = self.proj(out)
-        out = self.proj_drop(out)
-        return out
-
-
-# ---------------------------------------------------------------------------
-# Transformer blocks
-# ---------------------------------------------------------------------------
+        x = F.scaled_dot_product_attention(q, k, v)
+        x = x.transpose(1, 2).reshape(B, N_q, C)
+        return self.proj_drop(self.proj(x))
 
 
 class CrossAttentionBlock(nn.Module):
-    """Pre-norm cross-attention block: latent Q attends to input K, V."""
+    """Pre-norm cross-attention block matching DINOv3's
+    :class:`SelfAttentionBlock` design:
+
+    * ``LayerScale`` on both residuals (when ``init_values`` is set).
+    * Stochastic depth via ``sample_drop_ratio`` (per-batch sample skip
+      with ``torch.index_add``), not the timm ``DropPath`` module.
+    * Configurable norm layer (``LayerNorm`` / ``LayerNormBF16`` /
+      ``RMSNorm``) and FFN layer (``Mlp`` / ``SwiGLUFFN``).
+    """
 
     def __init__(
         self,
         dim: int,
         num_heads: int,
-        mlp_ratio: float = 4.0,
-        qkv_bias: bool = True,
+        ffn_ratio: float = 4.0,
+        qkv_bias: bool = False,
+        proj_bias: bool = True,
+        ffn_bias: bool = True,
         drop: float = 0.0,
         attn_drop: float = 0.0,
+        init_values: Optional[float] = None,
         drop_path: float = 0.0,
-        init_values: Optional[float] = 1e-5,
-        qk_norm: bool = False,
-        act_layer: type = nn.GELU,
+        act_layer=nn.GELU,
+        norm_layer=nn.LayerNorm,
+        ffn_layer=Mlp,
+        device: Any | None = None,
     ) -> None:
         super().__init__()
-        self.norm1_q = LayerNorm(dim)
-        self.norm1_kv = LayerNorm(dim)
-        self.attn = MultiHeadAttentionRoPE2D(
-            dim=dim,
+        self.norm1_q = norm_layer(dim)
+        self.norm1_kv = norm_layer(dim)
+        self.attn = CrossAttention(
+            dim,
             num_heads=num_heads,
             qkv_bias=qkv_bias,
+            proj_bias=proj_bias,
             attn_drop=attn_drop,
             proj_drop=drop,
-            qk_norm=qk_norm,
+            device=device,
         )
         self.ls1 = (
-            LayerScale(dim, init_values=init_values)
-            if init_values is not None
+            LayerScale(dim, init_values=init_values, device=device)
+            if init_values
             else nn.Identity()
         )
-        self.drop_path1 = DropPath(drop_path) if drop_path > 0 else Identity()
 
-        self.norm2 = LayerNorm(dim)
-        self.mlp = Mlp(
+        self.norm2 = norm_layer(dim)
+        ffn_hidden = int(dim * ffn_ratio)
+        self.mlp = ffn_layer(
             in_features=dim,
-            hidden_features=int(dim * mlp_ratio),
+            hidden_features=ffn_hidden,
             act_layer=act_layer,
             drop=drop,
+            bias=ffn_bias,
+            device=device,
         )
         self.ls2 = (
-            LayerScale(dim, init_values=init_values)
-            if init_values is not None
+            LayerScale(dim, init_values=init_values, device=device)
+            if init_values
             else nn.Identity()
         )
-        self.drop_path2 = DropPath(drop_path) if drop_path > 0 else Identity()
+
+        self.sample_drop_ratio = float(drop_path)
+
+    def _forward(
+        self,
+        q: Tensor,
+        kv: Tensor,
+        q_rope: Optional[Tuple[Tensor, Tensor]],
+        kv_rope: Optional[Tuple[Tensor, Tensor]],
+    ) -> Tensor:
+        b = q.shape[0]
+        sample_subset_size = max(int(b * (1 - self.sample_drop_ratio)), 1)
+        residual_scale_factor = b / sample_subset_size
+
+        if self.training and self.sample_drop_ratio > 0.0:
+            indices_1 = torch.randperm(b, device=q.device)[:sample_subset_size]
+            q_sub_1 = q[indices_1]
+            kv_sub_1 = kv[indices_1]
+            residual_1 = self.attn(
+                self.norm1_q(q_sub_1),
+                self.norm1_kv(kv_sub_1),
+                q_rope=q_rope,
+                kv_rope=kv_rope,
+            )
+            q_attn = torch.index_add(
+                q,
+                dim=0,
+                source=self.ls1(residual_1),
+                index=indices_1,
+                alpha=residual_scale_factor,
+            )
+
+            indices_2 = torch.randperm(b, device=q.device)[:sample_subset_size]
+            q_sub_2 = q_attn[indices_2]
+            residual_2 = self.mlp(self.norm2(q_sub_2))
+            q_ffn = torch.index_add(
+                q_attn,
+                dim=0,
+                source=self.ls2(residual_2),
+                index=indices_2,
+                alpha=residual_scale_factor,
+            )
+        else:
+            q_attn = q + self.ls1(
+                self.attn(
+                    self.norm1_q(q),
+                    self.norm1_kv(kv),
+                    q_rope=q_rope,
+                    kv_rope=kv_rope,
+                )
+            )
+            q_ffn = q_attn + self.ls2(self.mlp(self.norm2(q_attn)))
+        return q_ffn
 
     def forward(
         self,
         q: Tensor,
         kv: Tensor,
-        q_sincos: Tuple[Tensor, Tensor],
-        kv_sincos: Tuple[Tensor, Tensor],
+        q_rope: Optional[Tuple[Tensor, Tensor]] = None,
+        kv_rope: Optional[Tuple[Tensor, Tensor]] = None,
         return_attn: bool = False,
     ) -> Tensor:
         if return_attn:
             return self.attn(
                 self.norm1_q(q),
                 self.norm1_kv(kv),
-                q_sincos,
-                kv_sincos,
+                q_rope=q_rope,
+                kv_rope=kv_rope,
                 return_attn=True,
             )
-        h = self.attn(self.norm1_q(q), self.norm1_kv(kv), q_sincos, kv_sincos)
-        q = q + self.drop_path1(self.ls1(h))
-        q = q + self.drop_path2(self.ls2(self.mlp(self.norm2(q))))
-        return q
-
-
-class SelfAttentionBlock(nn.Module):
-    """Pre-norm self-attention block on the latent tokens (with prefix)."""
-
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int,
-        mlp_ratio: float = 4.0,
-        qkv_bias: bool = True,
-        drop: float = 0.0,
-        attn_drop: float = 0.0,
-        drop_path: float = 0.0,
-        init_values: Optional[float] = 1e-5,
-        qk_norm: bool = False,
-        act_layer: type = nn.GELU,
-    ) -> None:
-        super().__init__()
-        self.norm1 = LayerNorm(dim)
-        self.attn = MultiHeadAttentionRoPE2D(
-            dim=dim,
-            num_heads=num_heads,
-            qkv_bias=qkv_bias,
-            attn_drop=attn_drop,
-            proj_drop=drop,
-            qk_norm=qk_norm,
-        )
-        self.ls1 = (
-            LayerScale(dim, init_values=init_values)
-            if init_values is not None
-            else nn.Identity()
-        )
-        self.drop_path1 = DropPath(drop_path) if drop_path > 0 else Identity()
-
-        self.norm2 = LayerNorm(dim)
-        self.mlp = Mlp(
-            in_features=dim,
-            hidden_features=int(dim * mlp_ratio),
-            act_layer=act_layer,
-            drop=drop,
-        )
-        self.ls2 = (
-            LayerScale(dim, init_values=init_values)
-            if init_values is not None
-            else nn.Identity()
-        )
-        self.drop_path2 = DropPath(drop_path) if drop_path > 0 else Identity()
-
-    def forward(
-        self,
-        x: Tensor,
-        sincos: Tuple[Tensor, Tensor],
-        return_attn: bool = False,
-    ) -> Tensor:
-        x_norm = self.norm1(x)
-        if return_attn:
-            return self.attn(x_norm, x_norm, sincos, sincos, return_attn=True)
-        h = self.attn(x_norm, x_norm, sincos, sincos)
-        x = x + self.drop_path1(self.ls1(h))
-        x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
-        return x
+        return self._forward(q, kv, q_rope, kv_rope)
 
 
 # ---------------------------------------------------------------------------
-# Patch embedding + Perceiver
+# Patch embedding
 # ---------------------------------------------------------------------------
 
 
-class PerceiverPatchEmbed(nn.Module):
+class PerceiverPatchEmbed(PatchEmbed):
     """Conv2d patch embedding for the Perceiver input branch.
 
-    Note:
-        For compatibility with the existing Lightning training loop, the
-        ``grid_size`` and ``num_patches`` attributes report the **latent**
-        grid (not the input grid). The true input grid is exposed through
-        ``input_grid_size`` and ``num_input_patches``.
+    Subclasses DINOv3's :class:`PatchEmbed` so the same
+    ``reset_parameters`` (uniform fan-in init) and ``isinstance``-based
+    dispatch in :func:`init_weights_vit` are reused unchanged.
+
+    To keep the existing Lightning iBOT-mask logic (which reads
+    ``vit.patch_embed.grid_size`` to size the mask) targeted at the
+    **latent** grid, we override ``grid_size`` and ``num_patches`` to
+    report the latent grid. The actual conv-output grid is exposed
+    through ``input_grid_size`` and ``num_input_patches``.
     """
 
     def __init__(
@@ -558,44 +342,57 @@ class PerceiverPatchEmbed(nn.Module):
         patch_size: int,
         img_size: int,
         latent_size: Tuple[int, int],
+        device: Any | None = None,
     ) -> None:
-        super().__init__()
-        ps = (patch_size, patch_size) if isinstance(patch_size, int) else patch_size
-        isz = (img_size, img_size) if isinstance(img_size, int) else img_size
-        if isz[0] % ps[0] != 0 or isz[1] % ps[1] != 0:
-            raise ValueError(
-                f"img_size {isz} must be divisible by patch_size {ps}."
-            )
-        self.patch_size = ps
-        self.img_size = isz
-        self.input_grid_size = (isz[0] // ps[0], isz[1] // ps[1])
-        self.num_input_patches = self.input_grid_size[0] * self.input_grid_size[1]
-
-        # Reported sizes are the latent grid (drives iBOT masking + sequence_length).
-        self.grid_size = tuple(latent_size)
-        self.num_patches = self.grid_size[0] * self.grid_size[1]
-
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=ps, stride=ps)
+        super().__init__(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_chans=in_chans,
+            embed_dim=embed_dim,
+            norm_layer=None,
+            flatten_embedding=True,
+        )
+        # The parent stored its conv-output grid under ``patches_resolution``
+        # (and ``grid_size`` via the alias we added in dinov3.py). Stash it
+        # under a different name and override grid_size to report the
+        # latent grid.
+        self.input_grid_size = self.patches_resolution
+        self.num_input_patches = (
+            self.input_grid_size[0] * self.input_grid_size[1]
+        )
+        latent_HW = make_2tuple(tuple(latent_size))
+        self.grid_size = tuple(latent_HW)
+        self.num_patches = latent_HW[0] * latent_HW[1]
+        # Move to device if requested (dinov3's PatchEmbed builds on default).
+        if device is not None:
+            self.to(device)
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
         x = self.proj(x)  # (B, D, H_in, W_in)
-        h_in, w_in = x.shape[-2], x.shape[-1]
-        x = x.flatten(2).transpose(1, 2)  # (B, N_in, D)
+        h_in, w_in = x.size(2), x.size(3)
+        x = x.flatten(2).transpose(1, 2)  # (B, H_in*W_in, D)
+        x = self.norm(x)
         return x, (h_in, w_in)
+
+
+# ---------------------------------------------------------------------------
+# Perceiver
+# ---------------------------------------------------------------------------
 
 
 class PerceiverStrucPerc(nn.Module):
     """Perceiver-style backbone with a spatially structured latent grid.
 
-    This module is also used as the ``vit`` namespace by
-    ``MaskedPerceiverStrucPerc`` so that the existing Lightning code paths
-    that reach into ``backbone.vit.patch_embed.grid_size``,
-    ``backbone.vit.num_prefix_tokens`` and ``backbone.vit.blocks`` continue
-    to work without modification.
+    Also acts as the ``vit`` namespace exposed by
+    :class:`MaskedPerceiverStrucPerc` so that
+    ``backbone.vit.patch_embed.grid_size``,
+    ``backbone.vit.num_prefix_tokens`` and ``backbone.vit.blocks`` keep
+    their TIMM-ViT semantics.
     """
 
     def __init__(
         self,
+        *,
         in_chans: int,
         img_size: int,
         patch_size: int,
@@ -605,14 +402,18 @@ class PerceiverStrucPerc(nn.Module):
         num_self_blocks: int = 8,
         num_cross_blocks: int = 1,
         depth_outer: int = 1,
-        reg_tokens: int = 0,
-        mlp_ratio: float = 4.0,
+        n_storage_tokens: int = 0,
+        ffn_ratio: float = 4.0,
         qkv_bias: bool = True,
-        qk_norm: bool = False,
+        proj_bias: bool = True,
+        ffn_bias: bool = True,
+        mask_k_bias: bool = False,
         drop_rate: float = 0.0,
         attn_drop_rate: float = 0.0,
         drop_path_rate: float = 0.0,
-        init_values: Optional[float] = 1e-5,
+        layerscale_init: Optional[float] = 1e-5,
+        norm_layer: str = "layernorm",
+        ffn_layer: str = "mlp",
         # 2D RoPE (DINOv3-style)
         rope_base: Optional[float] = 100.0,
         rope_min_period: Optional[float] = None,
@@ -621,6 +422,8 @@ class PerceiverStrucPerc(nn.Module):
         rope_shift_coords: Optional[float] = None,
         rope_jitter_coords: Optional[float] = None,
         rope_rescale_coords: Optional[float] = None,
+        rope_dtype: str = "fp32",
+        device: Any | None = None,
     ) -> None:
         super().__init__()
         if depth_outer < 1:
@@ -631,29 +434,32 @@ class PerceiverStrucPerc(nn.Module):
             raise ValueError("num_self_blocks must be >= 0.")
 
         self.embed_dim = embed_dim
+        self.num_features = embed_dim  # for parity with DinoVisionTransformer
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
-        self.latent_size = tuple(latent_size)
+        self.latent_size = make_2tuple(tuple(latent_size))
         self.latent_h, self.latent_w = self.latent_size
         self.L = self.latent_h * self.latent_w
-        self.reg_tokens_count = reg_tokens
-        self.has_class_token = True
-        self.num_prefix_tokens = 1 + reg_tokens
+        self.n_storage_tokens = n_storage_tokens
 
         self.depth_outer = int(depth_outer)
         self.num_cross_blocks = int(num_cross_blocks)
         self.num_self_blocks = int(num_self_blocks)
+        self.n_blocks = self.num_self_blocks  # parity attribute
+        self.patch_size = patch_size
 
-        # Compatibility shims for the existing MaskedVisionTransformerTIMM/
-        # Lightning code paths that probe attributes on ``vit``.
-        self.dynamic_img_size = False
+        # Compatibility shims for callers that reach for TIMM-ViT
+        # attributes on ``vit``.
+        self.has_class_token = True
         self.no_embed_class = True
         self.global_pool = ""
         self.attn_pool = None
-        # ``pos_embed`` is queried by ``MaskedVisionTransformerTIMM`` in
-        # ``add_pos_embed``; we never use it but keep an empty parameter so
-        # the attribute exists.
-        self.pos_embed = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=False)
+        self.dynamic_img_size = False
+        # ``pos_embed`` is queried by some lightly utilities; we never use
+        # it (RoPE is applied inside attention) but keep the attribute.
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, 1, embed_dim, device=device), requires_grad=False
+        )
 
         # Patch embed (input branch).
         self.patch_embed = PerceiverPatchEmbed(
@@ -662,25 +468,33 @@ class PerceiverStrucPerc(nn.Module):
             patch_size=patch_size,
             img_size=img_size,
             latent_size=self.latent_size,
+            device=device,
         )
 
         # Learnable latent token bank.
-        self.latent_tokens = nn.Parameter(torch.zeros(1, self.L, embed_dim))
-        nn.init.trunc_normal_(self.latent_tokens, std=0.02)
+        self.latent_tokens = nn.Parameter(
+            torch.empty(1, self.L, embed_dim, device=device)
+        )
 
-        # CLS + register tokens.
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        if reg_tokens > 0:
-            self.reg_token = nn.Parameter(torch.zeros(1, reg_tokens, embed_dim))
-            nn.init.trunc_normal_(self.reg_token, std=0.02)
+        # CLS + storage (registers).
+        self.cls_token = nn.Parameter(
+            torch.empty(1, 1, embed_dim, device=device)
+        )
+        if self.n_storage_tokens > 0:
+            self.storage_tokens = nn.Parameter(
+                torch.empty(1, self.n_storage_tokens, embed_dim, device=device)
+            )
         else:
-            self.reg_token = None
+            self.storage_tokens = None
+
+        # iBOT mask token (lives at the latent grid).
+        self.mask_token = nn.Parameter(torch.empty(1, embed_dim, device=device))
 
         # 2D RoPE (shared across all attention layers; only the parent
         # Perceiver owns the ``periods`` buffer).
-        self.rope = RopePositionEmbedding(
-            head_dim=self.head_dim,
+        self.rope_embed = RopePositionEmbedding(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
             base=rope_base,
             min_period=rope_min_period,
             max_period=rope_max_period,
@@ -688,163 +502,196 @@ class PerceiverStrucPerc(nn.Module):
             shift_coords=rope_shift_coords,
             jitter_coords=rope_jitter_coords,
             rescale_coords=rope_rescale_coords,
+            dtype=dtype_dict[rope_dtype],
+            device=device,
         )
 
-        # Drop path schedule (uniform across cross + self blocks initially).
-        total_blocks = self.num_cross_blocks * self.depth_outer + self.num_self_blocks
-        dp_rates = [drop_path_rate for _ in range(max(total_blocks, 1))]
+        # Norm / FFN / activation choices (same dispatch tables as dinov3).
+        norm_layer_cls = norm_layer_dict[norm_layer]
+        ffn_layer_cls = ffn_layer_dict[ffn_layer]
+        act_layer = nn.GELU
 
-        # Cross-attention blocks.
+        # Cross-attention blocks (Perceiver-only).
         self.cross_blocks = nn.ModuleList(
             [
                 CrossAttentionBlock(
                     dim=embed_dim,
                     num_heads=num_heads,
-                    mlp_ratio=mlp_ratio,
+                    ffn_ratio=ffn_ratio,
                     qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
                     drop=drop_rate,
                     attn_drop=attn_drop_rate,
-                    drop_path=dp_rates[i],
-                    init_values=init_values,
-                    qk_norm=qk_norm,
+                    drop_path=drop_path_rate,
+                    init_values=layerscale_init,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer_cls,
+                    ffn_layer=ffn_layer_cls,
+                    device=device,
                 )
-                for i in range(self.num_cross_blocks * self.depth_outer)
+                for _ in range(self.num_cross_blocks * self.depth_outer)
             ]
         )
 
-        # Self-attention blocks (latent + prefix).
-        offset = self.num_cross_blocks * self.depth_outer
+        # Self-attention blocks (latent + prefix). Reuses DINOv3's block
+        # directly so the inner attention, dropout/drop-path, LayerScale,
+        # FFN, and ``init_weights_vit`` dispatch all match DINOv3 exactly.
         self.self_blocks = nn.ModuleList(
             [
                 SelfAttentionBlock(
                     dim=embed_dim,
                     num_heads=num_heads,
-                    mlp_ratio=mlp_ratio,
+                    ffn_ratio=ffn_ratio,
                     qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
                     drop=drop_rate,
                     attn_drop=attn_drop_rate,
-                    drop_path=dp_rates[offset + i],
-                    init_values=init_values,
-                    qk_norm=qk_norm,
+                    drop_path=drop_path_rate,
+                    init_values=layerscale_init,
+                    act_layer=act_layer,
+                    norm_layer=norm_layer_cls,
+                    ffn_layer=ffn_layer_cls,
+                    mask_k_bias=mask_k_bias,
+                    device=device,
                 )
-                for i in range(self.num_self_blocks)
+                for _ in range(self.num_self_blocks)
             ]
         )
 
         # Final norm and (no-op) pre-norm/dropout for compat.
-        self.norm = LayerNorm(embed_dim)
+        self.norm = norm_layer_cls(embed_dim)
         self.norm_pre = nn.Identity()
         self.pos_drop = nn.Identity()
+        self.head = nn.Identity()  # parity with DinoVisionTransformer
 
-        self.apply(_init_weights)
+        self.init_weights()
 
-    # Compatibility alias used by code that iterates ``vit.blocks`` (e.g.
-    # ``update_drop_path_rate`` and ``get_last_selfattention``). Implemented
-    # as a property so it does not create a duplicate submodule path in the
-    # state dict (HuggingFace safetensors refuses tied weights).
+    @property
+    def num_prefix_tokens(self) -> int:
+        return 1 + self.n_storage_tokens
+
+    @property
+    def reg_token(self) -> Optional[Tensor]:
+        """Alias for ``storage_tokens`` (TIMM-style)."""
+        return self.storage_tokens if self.n_storage_tokens > 0 else None
+
+    # Compatibility alias used by code that iterates ``vit.blocks``
+    # (e.g. ``get_last_selfattention``). Implemented as a property so it
+    # does not duplicate submodules in the state dict (HuggingFace
+    # safetensors refuses tied weights).
     @property
     def blocks(self) -> nn.ModuleList:
         return self.self_blocks
 
     # ------------------------------------------------------------------
+    # Init weights (matches DINOv3)
+    # ------------------------------------------------------------------
+
+    def init_weights(self) -> None:
+        """Initialize weights using the DINOv3 recipe.
+
+        * ``periods`` of the RoPE module are reset (closed-form).
+        * ``cls_token``, ``storage_tokens``, ``latent_tokens`` are
+          ``nn.init.normal_(std=0.02)`` (matching DINOv3's
+          ``cls_token`` / ``storage_tokens``).
+        * ``mask_token`` is zeroed.
+        * Every other layer is dispatched via :func:`init_weights_vit`
+          (trunc-normal Linear weights, zero biases, default LayerNorm,
+          LayerScale init to ``init_values``, PatchEmbed uniform init).
+        """
+        self.rope_embed._init_weights()
+        nn.init.normal_(self.cls_token, std=0.02)
+        if self.storage_tokens is not None:
+            nn.init.normal_(self.storage_tokens, std=0.02)
+        nn.init.normal_(self.latent_tokens, std=0.02)
+        nn.init.zeros_(self.mask_token)
+        named_apply(init_weights_vit, self)
+
+    # ------------------------------------------------------------------
     # RoPE helpers
     # ------------------------------------------------------------------
 
-    def _compute_q_kv_sincos(
+    def _compute_q_kv_rope(
         self, h_in: int, w_in: int
     ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
-        """Compute matched ``(sin, cos)`` for the latent and input grids.
-
-        A single augmentation state is sampled and reused for both grids so
-        that the relative spatial geometry between latent queries and input
-        keys/values is preserved (otherwise ``shift`` / ``jitter`` /
-        ``rescale`` would create independent perturbations).
+        """Compute matched RoPE ``(sin, cos)`` for the latent and input
+        grids using a **single** sampled augmentation state. Sharing the
+        state across the two grids is required for the latent queries
+        and input keys to live in a consistent coordinate system; if the
+        two ``forward`` calls sampled independently, training-time
+        ``shift`` / ``jitter`` / ``rescale`` would create independent
+        perturbations and corrupt the relative geometry.
         """
-        device = self.rope.periods.device
-        dtype = self.rope.dtype
-        augment_state = self.rope.sample_augment_state(device, dtype)
-
-        q_sin, q_cos = self.rope(
+        augment_state = self.rope_embed.sample_augment_state()
+        q_rope = self.rope_embed(
             H=self.latent_h, W=self.latent_w, augment_state=augment_state
         )
-        # Identity rotation for prefix (CLS + register) tokens.
-        q_sin, q_cos = pad_sincos_for_prefix(q_sin, q_cos, self.num_prefix_tokens)
-
-        kv_sin, kv_cos = self.rope(H=h_in, W=w_in, augment_state=augment_state)
-        return (q_sin, q_cos), (kv_sin, kv_cos)
-
-    def _compute_self_sincos(
-        self, augment_state: Optional[_AugmentState] = None
-    ) -> Tuple[Tensor, Tensor]:
-        """``(sin, cos)`` for the latent grid (with prefix padding).
-
-        Used by latent self-attention. Reuses an augmentation state if
-        provided so the latent self-attention shares the same perturbation
-        as the cross-attention before it.
-        """
-        sin, cos = self.rope(
-            H=self.latent_h, W=self.latent_w, augment_state=augment_state
-        )
-        return pad_sincos_for_prefix(sin, cos, self.num_prefix_tokens)
+        kv_rope = self.rope_embed(H=h_in, W=w_in, augment_state=augment_state)
+        return q_rope, kv_rope
 
     def build_initial_queries(self, batch_size: int) -> Tensor:
-        """Construct the initial (prefix + latent) query tokens."""
+        """Construct the initial (prefix + latent) query sequence.
+
+        Order: ``[cls, storage_tokens..., latent_tokens]``.
+        """
         latent = self.latent_tokens.expand(batch_size, -1, -1)
         prefix = [self.cls_token.expand(batch_size, -1, -1)]
-        if self.reg_token is not None:
-            prefix.append(self.reg_token.expand(batch_size, -1, -1))
+        if self.storage_tokens is not None:
+            prefix.append(self.storage_tokens.expand(batch_size, -1, -1))
         prefix_t = torch.cat(prefix, dim=1)
         return torch.cat([prefix_t, latent], dim=1)
+
+    # ------------------------------------------------------------------
+    # Forward / encode
+    # ------------------------------------------------------------------
 
     def encode(
         self,
         images: Tensor,
         mask: Optional[Tensor] = None,
-        mask_token: Optional[Tensor] = None,
         return_intermediates: bool = False,
     ) -> Tensor | Tuple[Tensor, List[Tensor]]:
         """Run the Perceiver pipeline and return the final token sequence.
 
         Args:
             images: ``(B, C, H, W)``.
-            mask: Optional ``(B, n_prefix + L)`` boolean mask. Tokens where
-                ``mask`` is True are replaced by ``mask_token`` after the
-                first cross-attention block.
-            mask_token: ``(1, 1, D)`` parameter to substitute at masked
-                positions. Required if ``mask`` is provided.
+            mask: Optional ``(B, n_prefix + L)`` boolean mask. Tokens
+                where ``mask`` is True are replaced by ``mask_token``
+                after the first cross-attention block.
             return_intermediates: If True, returns a list of all
-                intermediate self-attention outputs.
+                intermediate self-attention outputs (after each block,
+                pre-norm).
 
         Returns:
             ``(B, n_prefix + L, D)`` final tokens (after final ``norm``).
-            If ``return_intermediates`` is True, also returns the list of
-            per-block outputs.
+            If ``return_intermediates`` is True, also returns the list
+            of per-self-block outputs.
         """
-        if mask is not None and mask_token is None:
-            raise ValueError("mask_token must be provided when mask is not None.")
-
         B = images.shape[0]
 
         in_tokens, (h_in, w_in) = self.patch_embed(images)  # (B, N_in, D)
         q = self.build_initial_queries(B)  # (B, n_prefix + L, D)
-        q_sincos, kv_sincos = self._compute_q_kv_sincos(h_in, w_in)
+        q_rope, kv_rope = self._compute_q_kv_rope(h_in, w_in)
 
         intermediates: List[Tensor] = []
         mask_applied = False
 
         if self.depth_outer == 1:
             for blk in self.cross_blocks:
-                q = blk(q, in_tokens, q_sincos, kv_sincos)
+                q = blk(q, in_tokens, q_rope=q_rope, kv_rope=kv_rope)
             if mask is not None:
-                q = _apply_mask_token(q, mask, mask_token)
+                q = _apply_mask_token(q, mask, self.mask_token)
                 mask_applied = True
             for blk in self.self_blocks:
-                q = blk(q, q_sincos)
+                q = blk(q, q_rope)
                 if return_intermediates:
                     intermediates.append(q)
         else:
-            # Iterated mode: depth_outer x (cross blocks then a slice of self
-            # blocks). Mask is applied once after the very first cross block.
+            # Iterated mode: depth_outer x (cross blocks then a slice of
+            # self blocks). Mask is applied once after the very first
+            # cross block.
             self_per_outer, remainder = divmod(
                 self.num_self_blocks, self.depth_outer
             )
@@ -853,15 +700,15 @@ class PerceiverStrucPerc(nn.Module):
             for outer in range(self.depth_outer):
                 for _ in range(self.num_cross_blocks):
                     q = self.cross_blocks[cross_idx](
-                        q, in_tokens, q_sincos, kv_sincos
+                        q, in_tokens, q_rope=q_rope, kv_rope=kv_rope
                     )
                     cross_idx += 1
                     if mask is not None and not mask_applied:
-                        q = _apply_mask_token(q, mask, mask_token)
+                        q = _apply_mask_token(q, mask, self.mask_token)
                         mask_applied = True
                 this_outer = self_per_outer + (1 if outer < remainder else 0)
                 for _ in range(this_outer):
-                    q = self.self_blocks[self_idx](q, q_sincos)
+                    q = self.self_blocks[self_idx](q, q_rope)
                     if return_intermediates:
                         intermediates.append(q)
                     self_idx += 1
@@ -872,26 +719,36 @@ class PerceiverStrucPerc(nn.Module):
             return q, intermediates
         return q
 
+    # ------------------------------------------------------------------
+    # Attention helpers (visualization)
+    # ------------------------------------------------------------------
+
     @torch.no_grad()
     def last_selfattention(self, images: Tensor) -> Tensor:
-        """Return softmax attention probs of the last self-attention block."""
-        B = images.shape[0]
+        """Return softmax attention probs of the last self-attention block.
 
+        Shape: ``(B, num_heads, n_prefix + L, n_prefix + L)``.
+
+        DINOv3's :class:`SelfAttention` uses fused SDPA which never
+        materializes the attention matrix, so we manually recompute Q/K
+        for the last block (with RoPE) and softmax to recover the weights.
+        """
         if len(self.self_blocks) == 0:
             raise RuntimeError(
                 "last_selfattention requires at least one self-attention block."
             )
 
+        B = images.shape[0]
         in_tokens, (h_in, w_in) = self.patch_embed(images)
         q = self.build_initial_queries(B)
-        q_sincos, kv_sincos = self._compute_q_kv_sincos(h_in, w_in)
+        q_rope, kv_rope = self._compute_q_kv_rope(h_in, w_in)
 
         if self.depth_outer == 1:
             for blk in self.cross_blocks:
-                q = blk(q, in_tokens, q_sincos, kv_sincos)
+                q = blk(q, in_tokens, q_rope=q_rope, kv_rope=kv_rope)
             for blk in self.self_blocks[:-1]:
-                q = blk(q, q_sincos)
-            return self.self_blocks[-1](q, q_sincos, return_attn=True)
+                q = blk(q, q_rope)
+            return _last_selfattention_softmax(self.self_blocks[-1], q, q_rope)
 
         # Iterated mode: replay the full pipeline up to the last self block.
         self_per_outer, remainder = divmod(self.num_self_blocks, self.depth_outer)
@@ -900,46 +757,72 @@ class PerceiverStrucPerc(nn.Module):
         last_block = self.self_blocks[-1]
         for outer in range(self.depth_outer):
             for _ in range(self.num_cross_blocks):
-                q = self.cross_blocks[cross_idx](q, in_tokens, q_sincos, kv_sincos)
+                q = self.cross_blocks[cross_idx](
+                    q, in_tokens, q_rope=q_rope, kv_rope=kv_rope
+                )
                 cross_idx += 1
             this_outer = self_per_outer + (1 if outer < remainder else 0)
-            for k in range(this_outer):
+            for _ in range(this_outer):
                 blk = self.self_blocks[self_idx]
                 self_idx += 1
                 if blk is last_block:
-                    return blk(q, q_sincos, return_attn=True)
-                q = blk(q, q_sincos)
+                    return _last_selfattention_softmax(blk, q, q_rope)
+                q = blk(q, q_rope)
         raise RuntimeError("Unreachable: failed to reach last self-attention block.")
 
     @torch.no_grad()
     def first_cross_attention(self, images: Tensor) -> Tensor:
         """Return softmax probs of the first cross-attention block.
 
-        Shape: ``(B, h, n_prefix + L, N_in)``.
+        Shape: ``(B, num_heads, n_prefix + L, N_in)``.
         """
         B = images.shape[0]
         in_tokens, (h_in, w_in) = self.patch_embed(images)
         q = self.build_initial_queries(B)
-        q_sincos, kv_sincos = self._compute_q_kv_sincos(h_in, w_in)
+        q_rope, kv_rope = self._compute_q_kv_rope(h_in, w_in)
         return self.cross_blocks[0](
-            q, in_tokens, q_sincos, kv_sincos, return_attn=True
+            q, in_tokens, q_rope=q_rope, kv_rope=kv_rope, return_attn=True
         )
 
 
 def _apply_mask_token(tokens: Tensor, mask: Tensor, mask_token: Tensor) -> Tensor:
-    """Replace tokens at True positions of ``mask`` with ``mask_token``."""
+    """Replace tokens at True positions of ``mask`` with ``mask_token``.
+
+    ``mask_token`` is allowed to be either ``(D,)``, ``(1, D)`` or
+    ``(1, 1, D)``: it is broadcast against ``tokens`` of shape
+    ``(B, N, D)`` via standard broadcasting rules after a single
+    ``mask.unsqueeze(-1)``.
+    """
+    # Make sure mask_token has a broadcastable layout: end up with shape
+    # (1, 1, D) regardless of how it was created (DINOv3 stores it as
+    # (1, D), older code as (1, 1, D)).
+    while mask_token.dim() < 3:
+        mask_token = mask_token.unsqueeze(0)
     m = mask.unsqueeze(-1).to(dtype=tokens.dtype)
-    return tokens * (1.0 - m) + m * mask_token
+    return tokens * (1.0 - m) + m * mask_token.to(dtype=tokens.dtype)
 
 
-def _init_weights(module: Module) -> None:
-    if isinstance(module, Linear):
-        nn.init.xavier_uniform_(module.weight)
-        if module.bias is not None:
-            nn.init.constant_(module.bias, 0)
-    elif isinstance(module, LayerNorm):
-        nn.init.constant_(module.bias, 0)
-        nn.init.constant_(module.weight, 1.0)
+@torch.no_grad()
+def _last_selfattention_softmax(
+    block: SelfAttentionBlock,
+    x: Tensor,
+    rope: Optional[Tuple[Tensor, Tensor]],
+) -> Tensor:
+    """Recompute the softmax attention weights of one DINOv3
+    :class:`SelfAttentionBlock` block. Mirrors the equivalent helper in
+    :class:`MaskedDinoVisionTransformer.get_last_selfattention`.
+    """
+    x_norm = block.norm1(x)
+    a = block.attn
+    B, N, _ = x_norm.shape
+    C = a.qkv.in_features
+    qkv = a.qkv(x_norm).reshape(B, N, 3, a.num_heads, C // a.num_heads)
+    q, k, _ = torch.unbind(qkv, 2)
+    q, k = q.transpose(1, 2), k.transpose(1, 2)
+    if rope is not None:
+        q, k = a.apply_rope(q, k, rope)
+    attn = (q @ k.transpose(-2, -1)) * a.scale
+    return attn.softmax(dim=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -952,11 +835,9 @@ class MaskedPerceiverStrucPerc(nn.Module):
 
     Provides ``encode``, ``forward``, ``forward_intermediates``,
     ``get_last_selfattention``, ``get_cls_attention_map``, the
-    ``sequence_length`` property and the ``vit`` namespace expected by the
-    rest of the codebase.
+    ``sequence_length`` property and the ``vit`` namespace expected by
+    the rest of the codebase.
     """
-
-    mask_token: Parameter
 
     def __init__(
         self,
@@ -965,22 +846,20 @@ class MaskedPerceiverStrucPerc(nn.Module):
     ) -> None:
         super().__init__()
         self.perceiver = perceiver
-        self.mask_token = (
-            mask_token
-            if mask_token is not None
-            else Parameter(torch.zeros(1, 1, perceiver.embed_dim))
-        )
+        # Same trick as MaskedDinoVisionTransformer: if the caller passes
+        # a custom ``mask_token``, replace the one inside the perceiver
+        # so the parameter still lives at exactly one state-dict path.
+        if mask_token is not None:
+            self.perceiver.mask_token = mask_token
 
-    # Expose ``vit`` so existing code that reads
-    # ``backbone.vit.patch_embed.grid_size`` etc. works unchanged. Implemented
-    # as a property so it does not duplicate submodules in the state dict.
+    # Property to avoid duplicating submodules in the state dict.
     @property
     def vit(self) -> PerceiverStrucPerc:
         return self.perceiver
 
-    # ------------------------------------------------------------------
-    # Properties / abstract method shims
-    # ------------------------------------------------------------------
+    @property
+    def mask_token(self) -> Parameter:
+        return self.perceiver.mask_token
 
     @property
     def sequence_length(self) -> int:
@@ -993,17 +872,13 @@ class MaskedPerceiverStrucPerc(nn.Module):
 
     def prepend_prefix_tokens(self, x: Tensor) -> Tensor:
         prefix = [self.vit.cls_token.expand(x.shape[0], -1, -1)]
-        if self.vit.reg_token is not None:
-            prefix.append(self.vit.reg_token.expand(x.shape[0], -1, -1))
+        if self.vit.storage_tokens is not None:
+            prefix.append(self.vit.storage_tokens.expand(x.shape[0], -1, -1))
         return torch.cat(prefix + [x], dim=1)
 
     def add_pos_embed(self, x: Tensor) -> Tensor:
-        # No global position embedding: 2D RoPE is applied inside attention.
+        # No additive position embedding: 2D RoPE is applied inside attention.
         return x
-
-    # ------------------------------------------------------------------
-    # Forward / encode
-    # ------------------------------------------------------------------
 
     def forward(
         self,
@@ -1012,8 +887,6 @@ class MaskedPerceiverStrucPerc(nn.Module):
         idx_keep: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
     ) -> Tensor:
-        # Mirrors MaskedVisionTransformerTIMM.forward: returns the global
-        # representation (CLS by default).
         x = self.encode(images, idx_mask=idx_mask, idx_keep=idx_keep, mask=mask)
         return x[:, 0]
 
@@ -1033,7 +906,7 @@ class MaskedPerceiverStrucPerc(nn.Module):
             raise NotImplementedError(
                 "MaskedPerceiverStrucPerc does not support ``idx_keep``."
             )
-        return self.perceiver.encode(images, mask=mask, mask_token=self.mask_token)
+        return self.perceiver.encode(images, mask=mask)
 
     def forward_intermediates(
         self,
@@ -1050,7 +923,6 @@ class MaskedPerceiverStrucPerc(nn.Module):
         out, intermediates = self.perceiver.encode(
             images,
             mask=mask,
-            mask_token=self.mask_token,
             return_intermediates=True,
         )
         if norm:
@@ -1065,10 +937,6 @@ class MaskedPerceiverStrucPerc(nn.Module):
         idx_keep: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
     ) -> Tensor:
-        """Return softmax attention probs of the last latent self-attention block.
-
-        Shape: ``(B, num_heads, n_prefix + L, n_prefix + L)``.
-        """
         return self.perceiver.last_selfattention(images)
 
     @torch.no_grad()
@@ -1077,10 +945,8 @@ class MaskedPerceiverStrucPerc(nn.Module):
     ) -> Tensor:
         """Return the CLS query's cross-attention over input tokens.
 
-        For a Perceiver this is the natural CLS->image heatmap. The result
-        is reshaped to the **input** patch grid (the spatial grid the user
-        actually sees in the image), with the same ``head_fusion`` semantics
-        as ``MaskedVisionTransformerTIMM.get_cls_attention_map``.
+        For a Perceiver this is the natural CLS->image heatmap. The
+        result is reshaped to the **input** patch grid.
 
         Shape:
             * ``"mean"`` -> ``(B, 1, H_in, W_in)``
@@ -1088,9 +954,7 @@ class MaskedPerceiverStrucPerc(nn.Module):
             * ``"none"`` -> ``(B, num_heads, H_in, W_in)``
         """
         attn = self.perceiver.first_cross_attention(images)  # (B, h, P+L, N_in)
-        cls_to_input = attn[:, :, 0, :]  # (B, h, N_in)
-        # Compute the actual input grid from the image (handles crop sizes
-        # that differ from the configured ``img_size``).
+        cls_to_input = attn[:, :, 0, :]
         ph, pw = self.vit.patch_embed.patch_size
         H_in = images.shape[-2] // ph
         W_in = images.shape[-1] // pw
@@ -1120,7 +984,14 @@ def update_drop_path_rate(
     drop_path_rate: float,
     mode: str = "linear",
 ) -> None:
-    """Update the drop-path rate of all cross + self attention blocks."""
+    """Update ``sample_drop_ratio`` on every cross + self attention block.
+
+    Matches :func:`update_drop_path_rate_dinov3` in style (no DropPath
+    module — DINOv3 implements stochastic depth via per-batch sample skip
+    and ``torch.index_add``).
+    """
+    import numpy as np
+
     blocks = list(perceiver.cross_blocks) + list(perceiver.self_blocks)
     total = len(blocks)
     if mode == "linear":
@@ -1132,16 +1003,11 @@ def update_drop_path_rate(
             f"Unknown mode: {mode!r}, supported modes are 'linear' and 'uniform'."
         )
     for blk, p in zip(blocks, probs):
-        if p > 0.0:
-            blk.drop_path1 = DropPath(drop_prob=p)
-            blk.drop_path2 = DropPath(drop_prob=p)
-        else:
-            blk.drop_path1 = Identity()
-            blk.drop_path2 = Identity()
+        blk.sample_drop_ratio = float(p)
 
 
 # ---------------------------------------------------------------------------
-# Top-level model (mirrors DINOv2 in dinov2.py)
+# Top-level model (mirrors DINOv2)
 # ---------------------------------------------------------------------------
 
 
@@ -1158,14 +1024,20 @@ def _build_perceiver_from_config(cfg: Dict[str, Any]) -> PerceiverStrucPerc:
         num_self_blocks=cfg.get("num_self_blocks", 8),
         num_cross_blocks=cfg.get("num_cross_blocks", 1),
         depth_outer=cfg.get("depth_outer", 1),
-        reg_tokens=cfg.get("reg_tokens", 0),
-        mlp_ratio=cfg.get("mlp_ratio", 4.0),
+        n_storage_tokens=cfg.get("n_storage_tokens", cfg.get("reg_tokens", 0)),
+        ffn_ratio=cfg.get("ffn_ratio", cfg.get("mlp_ratio", 4.0)),
         qkv_bias=cfg.get("qkv_bias", True),
-        qk_norm=cfg.get("qk_norm", False),
+        proj_bias=cfg.get("proj_bias", True),
+        ffn_bias=cfg.get("ffn_bias", True),
+        mask_k_bias=cfg.get("mask_k_bias", False),
         drop_rate=cfg.get("drop_rate", 0.0),
         attn_drop_rate=cfg.get("attn_drop_rate", 0.0),
         drop_path_rate=0.0,  # student gets drop path applied separately
-        init_values=cfg.get("init_values", 1e-5),
+        layerscale_init=cfg.get(
+            "layerscale_init", cfg.get("init_values", 1e-5)
+        ),
+        norm_layer=cfg.get("norm_layer", "layernorm"),
+        ffn_layer=cfg.get("ffn_layer", "mlp"),
         rope_base=cfg.get("rope_base", 100.0),
         rope_min_period=cfg.get("rope_min_period", None),
         rope_max_period=cfg.get("rope_max_period", None),
@@ -1173,15 +1045,16 @@ def _build_perceiver_from_config(cfg: Dict[str, Any]) -> PerceiverStrucPerc:
         rope_shift_coords=cfg.get("rope_shift_coords", None),
         rope_jitter_coords=cfg.get("rope_jitter_coords", None),
         rope_rescale_coords=cfg.get("rope_rescale_coords", None),
+        rope_dtype=cfg.get("rope_dtype", "fp32"),
     )
 
 
 class DINOv2StrucPerc(nn.Module):
     """Top-level DINOv2 model with a StrucPerc backbone.
 
-    Mirrors ``DINOv2`` from ``dinov2.py``: builds a teacher / student pair of
-    backbones and projection heads, freezes the teacher, and applies the
-    drop-path schedule to the student.
+    Mirrors :class:`src.scdino.models.backbones.dinov2.DINOv2`: builds a
+    teacher / student pair of backbones and projection heads, freezes the
+    teacher, and applies the drop-path schedule to the student.
     """
 
     def __init__(
@@ -1212,8 +1085,6 @@ class DINOv2StrucPerc(nn.Module):
         freeze_eval_module(self.teacher_backbone)
 
         # Projection heads (reuse existing implementations).
-        from functools import partial
-
         dino_head = partial(
             DINOv2ProjectionHead,
             input_dim=dino_head_config["embed_dim"],
@@ -1283,26 +1154,32 @@ if __name__ == "__main__":
             "num_self_blocks": 4,
             "num_cross_blocks": 1,
             "depth_outer": 1,
-            "reg_tokens": 4,
-            "mlp_ratio": 4.0,
+            "n_storage_tokens": 4,
+            "ffn_ratio": 4.0,
             "drop_path_rate": 0.1,
+            "layerscale_init": 1e-5,
+            "norm_layer": "layernorm",
+            "ffn_layer": "mlp",
+            "qkv_bias": True,
+            "proj_bias": True,
+            "ffn_bias": True,
             "rope_base": 100.0,
             "rope_normalize_coords": "separate",
             "rope_shift_coords": 0.5,
             "rope_jitter_coords": 2.0,
             "rope_rescale_coords": 2.0,
+            "rope_dtype": "fp32",
         },
     }
-    dino_head_config = {
+    head_cfg = {
         "embed_dim": 64,
         "hidden_dim": 64,
         "bottleneck_dim": 64,
         "output_dim": 64,
         "batch_norm": False,
     }
-    ibot_head_config = dict(dino_head_config)
 
-    model = DINOv2StrucPerc(backbone_config, dino_head_config, ibot_head_config)
+    model = DINOv2StrucPerc(backbone_config, head_cfg, head_cfg)
     x = torch.randn(2, 5, 50, 50)
 
     cls = model(x)
@@ -1350,7 +1227,19 @@ if __name__ == "__main__":
 
     # Train mode with augmentations: sin/cos must change between calls.
     model.train()
-    sin1, cos1 = model.teacher_backbone.vit.rope(H=10, W=10)
-    sin2, cos2 = model.teacher_backbone.vit.rope(H=10, W=10)
-    assert not torch.allclose(sin1, sin2), "RoPE augment did not vary in train mode."
+    sin1, cos1 = model.teacher_backbone.vit.rope_embed(H=10, W=10)
+    sin2, cos2 = model.teacher_backbone.vit.rope_embed(H=10, W=10)
+    assert not torch.allclose(sin1, sin2), (
+        "RoPE augment did not vary in train mode."
+    )
     print("train RoPE augment varies: OK")
+
+    # SwiGLU + RMSNorm path (DINOv3-style alt configuration).
+    backbone_config_alt = copy.deepcopy(backbone_config)
+    backbone_config_alt["perceiver"]["ffn_layer"] = "swiglu"
+    backbone_config_alt["perceiver"]["norm_layer"] = "rmsnorm"
+    backbone_config_alt["perceiver"]["mask_k_bias"] = True
+    alt = DINOv2StrucPerc(backbone_config_alt, head_cfg, head_cfg)
+    alt.eval()
+    out_alt = alt(x)
+    print("swiglu+rmsnorm+mask_k_bias forward (CLS):", out_alt.shape)

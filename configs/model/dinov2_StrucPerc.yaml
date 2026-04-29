@@ -16,22 +16,30 @@ architecture:
       # Token / attention sizes
       embed_dim: 64
       num_heads: 8
-      mlp_ratio: 4
+      ffn_ratio: 3
       # Latent grid (spatially structured)
-      latent_size: [25, 25]  # latent grid: 25x25
+      latent_size: [10, 10]  # latent grid: 25x25
       # Block layout
       num_self_blocks: 8
-      num_cross_blocks: 1
+      num_cross_blocks: 8
       depth_outer: 1         # 1 => single cross + N self; >1 => iterated
-      # Prefix tokens (CLS is always present)
-      reg_tokens: 8
+      # Storage / register tokens (CLS is always present)
+      n_storage_tokens: 4
+      # Block / norm / FFN choices (DINOv3-aligned)
+      norm_layer: layernormbf16  # 'layernorm' | 'layernormbf16' | 'rmsnorm'
+      ffn_layer: swiglu         # 'mlp' | 'swiglu' | 'swiglu32' | 'swiglu64' | 'swiglu128'
+      qkv_bias: false
+      proj_bias: true
+      ffn_bias: true
+      # ``mask_k_bias`` only applies to the latent self-attention blocks
+      # (zeroes the K-bias of the fused QKV linear); cross-attention
+      # uses a 2-chunk KV linear and ignores this knob.
+      mask_k_bias: false
       # Regularisation
       drop_rate: 0.0
       attn_drop_rate: 0.0
       drop_path_rate: 0.1
-      init_values: 1.0e-5
-      qkv_bias: true
-      qk_norm: false
+      layerscale_init: 1.0e-5
       # 2D RoPE (DINOv3-style). Use either ``rope_base`` OR
       # ``rope_min_period`` + ``rope_max_period`` (not both).
       rope_base: 100.0
@@ -44,7 +52,8 @@ architecture:
       # preserved.
       rope_shift_coords: null    # e.g. 0.5  (uniform shift in [-s, +s])
       rope_jitter_coords: null   # e.g. 2.0  (log-uniform per-axis scale)
-      rope_rescale_coords: null  # e.g. 2.0  (log-uniform isotropic scale)
+      rope_rescale_coords: 2  # e.g. 2.0  (log-uniform isotropic scale)
+      rope_dtype: fp32           # 'fp32' | 'fp16' | 'bf16'
   # DINO head parameters
   dino_head:
     embed_dim: 64

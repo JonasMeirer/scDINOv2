@@ -129,6 +129,18 @@ class DINOv2StrucPerc(L.LightningModule):
         perc_cfg = dict(self.backbone_config.get("perceiver", {}))
         latent_size = tuple(perc_cfg.get("latent_size", (25, 25)))
 
+        # YAMLs may use either the dinov3-style names (``ffn_ratio``,
+        # ``n_storage_tokens``, ``layerscale_init``) or the legacy
+        # TIMM/dinov2 names (``mlp_ratio``, ``reg_tokens``,
+        # ``init_values``). Accept both at the boundary.
+        ffn_ratio = perc_cfg.get("ffn_ratio", perc_cfg.get("mlp_ratio", 4.0))
+        n_storage = perc_cfg.get(
+            "n_storage_tokens", perc_cfg.get("reg_tokens", 0)
+        )
+        layerscale_init = perc_cfg.get(
+            "layerscale_init", perc_cfg.get("init_values", 1e-5)
+        )
+
         config = ScDINOConfig(
             model_variant="dinov2_StrucPerc",
             backbone_type="perceiver",
@@ -137,8 +149,8 @@ class DINOv2StrucPerc(L.LightningModule):
             patch_size=perc_cfg.get("patch_size", 1),
             embed_dim=perc_cfg.get("embed_dim", 64),
             num_heads=perc_cfg.get("num_heads", 8),
-            mlp_ratio=perc_cfg.get("mlp_ratio", 4.0),
-            reg_tokens=perc_cfg.get("reg_tokens", 0),
+            mlp_ratio=ffn_ratio,
+            reg_tokens=n_storage,
             # Perceiver-specific fields
             latent_h=int(latent_size[0]),
             latent_w=int(latent_size[1]),
@@ -152,9 +164,14 @@ class DINOv2StrucPerc(L.LightningModule):
             rope_shift_coords=perc_cfg.get("rope_shift_coords", None),
             rope_jitter_coords=perc_cfg.get("rope_jitter_coords", None),
             rope_rescale_coords=perc_cfg.get("rope_rescale_coords", None),
-            init_values=perc_cfg.get("init_values", 1e-5),
+            rope_dtype=perc_cfg.get("rope_dtype", "fp32"),
+            init_values=layerscale_init,
             qkv_bias=perc_cfg.get("qkv_bias", True),
-            qk_norm=perc_cfg.get("qk_norm", False),
+            proj_bias=perc_cfg.get("proj_bias", True),
+            ffn_bias=perc_cfg.get("ffn_bias", True),
+            mask_k_bias=perc_cfg.get("mask_k_bias", False),
+            ffn_layer=perc_cfg.get("ffn_layer", "mlp"),
+            norm_layer=perc_cfg.get("norm_layer", "layernorm"),
             # Reuse "depth" field as total self block count for HF compat.
             depth=perc_cfg.get("num_self_blocks", 8),
         )
