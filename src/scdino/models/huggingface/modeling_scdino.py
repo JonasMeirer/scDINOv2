@@ -12,6 +12,10 @@ from src.scdino.models.backbones.dinov2_StrucPerc import (
     MaskedPerceiverStrucPerc,
     PerceiverStrucPerc,
 )
+from src.scdino.models.backbones.dinov3 import (
+    DinoVisionTransformer,
+    MaskedDinoVisionTransformer,
+)
 from src.scdino.models.huggingface.configuration_scdino import ScDINOConfig
 
 
@@ -78,6 +82,40 @@ class ScDINOModel(PreTrainedModel):
             )
             self.backbone = MaskedPerceiverStrucPerc(perceiver=perceiver)
 
+        elif config.model_variant == "dinov3":
+            vit = DinoVisionTransformer(
+                img_size=config.img_size,
+                patch_size=config.patch_size,
+                in_chans=config.in_chans,
+                embed_dim=config.embed_dim,
+                depth=config.depth,
+                num_heads=config.num_heads,
+                ffn_ratio=config.mlp_ratio,
+                qkv_bias=config.qkv_bias,
+                proj_bias=config.proj_bias,
+                ffn_bias=config.ffn_bias,
+                drop_path_rate=0.0,
+                layerscale_init=config.init_values,
+                norm_layer=config.norm_layer,
+                ffn_layer=config.ffn_layer,
+                n_storage_tokens=config.reg_tokens,
+                mask_k_bias=config.mask_k_bias,
+                untie_cls_and_patch_norms=config.untie_cls_and_patch_norms,
+                untie_global_and_local_cls_norm=(
+                    config.untie_global_and_local_cls_norm
+                ),
+                # 2D RoPE
+                pos_embed_rope_base=config.rope_base,
+                pos_embed_rope_min_period=config.rope_min_period,
+                pos_embed_rope_max_period=config.rope_max_period,
+                pos_embed_rope_normalize_coords=config.rope_normalize_coords,
+                pos_embed_rope_shift_coords=config.rope_shift_coords,
+                pos_embed_rope_jitter_coords=config.rope_jitter_coords,
+                pos_embed_rope_rescale_coords=config.rope_rescale_coords,
+                pos_embed_rope_dtype=config.rope_dtype,
+            )
+            self.backbone = MaskedDinoVisionTransformer(vit=vit)
+
         elif config.model_variant == "dino":
             if config.backbone_type == "vit":
                 self.backbone = VisionTransformer(
@@ -132,7 +170,7 @@ class ScDINOModel(PreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
-        if self.config.model_variant in ("dinov2", "dinov2_StrucPerc"):
+        if self.config.model_variant in ("dinov2", "dinov2_StrucPerc", "dinov3"):
             last_hidden_state = self.backbone.encode(pixel_values)
             pooler_output = last_hidden_state[:, 0]
 

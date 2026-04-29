@@ -42,6 +42,15 @@ class ScDINOConfig(PretrainedConfig):
         init_values: float = 1e-5,
         qkv_bias: bool = True,
         qk_norm: bool = False,
+        # DINOv3 parameters (model_variant="dinov3")
+        ffn_layer: str = "mlp",
+        norm_layer: str = "layernorm",
+        rope_dtype: str = "fp32",
+        proj_bias: bool = True,
+        ffn_bias: bool = True,
+        mask_k_bias: bool = False,
+        untie_cls_and_patch_norms: bool = False,
+        untie_global_and_local_cls_norm: bool = False,
         **kwargs,
     ):
         self.model_variant = model_variant
@@ -71,4 +80,13 @@ class ScDINOConfig(PretrainedConfig):
         self.init_values = init_values
         self.qkv_bias = qkv_bias
         self.qk_norm = qk_norm
+        # DINOv3 fields
+        self.ffn_layer = ffn_layer
+        self.norm_layer = norm_layer
+        self.rope_dtype = rope_dtype
+        self.proj_bias = proj_bias
+        self.ffn_bias = ffn_bias
+        self.mask_k_bias = mask_k_bias
+        self.untie_cls_and_patch_norms = untie_cls_and_patch_norms
+        self.untie_global_and_local_cls_norm = untie_global_and_local_cls_norm
         super().__init__(**kwargs)
