@@ -711,7 +711,48 @@ class RopePositionEmbedding(nn.Module):
         )
         self._init_weights()
 
-    def forward(self, *, H: int, W: int) -> tuple[Tensor, Tensor]:
+    def sample_augment_state(self) -> tuple[Tensor | None, Tensor | None, Tensor | None]:
+        """Sample a single (shift, jitter, rescale) augmentation state.
+
+        Returns ``(None, None, None)`` if not training or no augmentation
+        is configured. Exposed publicly so that callers needing to reuse
+        the same perturbation across multiple ``forward`` calls (e.g. to
+        keep the latent-Q and input-KV grids of a cross-attention block
+        in a consistent coordinate system) can sample once and pass the
+        result to ``forward(..., augment_state=...)``.
+        """
+        if not self.training:
+            return (None, None, None)
+        device = self.periods.device
+        dtype = self.dtype
+        dd = {"device": device, "dtype": dtype}
+        shift_hw: Tensor | None = None
+        jitter_hw: Tensor | None = None
+        rescale_hw: Tensor | None = None
+        if self.shift_coords is not None:
+            shift_hw = torch.empty(2, **dd).uniform_(
+                -self.shift_coords, self.shift_coords
+            )
+        if self.jitter_coords is not None:
+            jitter_max = np.log(self.jitter_coords)
+            jitter_hw = (
+                torch.empty(2, **dd).uniform_(-jitter_max, jitter_max).exp()
+            )
+        if self.rescale_coords is not None:
+            rescale_max = np.log(self.rescale_coords)
+            rescale_hw = (
+                torch.empty(1, **dd).uniform_(-rescale_max, rescale_max).exp()
+            )
+        return (shift_hw, jitter_hw, rescale_hw)
+
+    def forward(
+        self,
+        *,
+        H: int,
+        W: int,
+        augment_state: tuple[Tensor | None, Tensor | None, Tensor | None]
+        | None = None,
+    ) -> tuple[Tensor, Tensor]:
         device = self.periods.device
         dtype = self.dtype
         dd = {"device": device, "dtype": dtype}
@@ -734,24 +775,25 @@ class RopePositionEmbedding(nn.Module):
         coords = coords.flatten(0, 1)  # [HW, 2]
         coords = 2.0 * coords - 1.0  # Shift range [0, 1] to [-1, +1]
 
+        # Resolve augmentation state. If the caller provided one we use it
+        # as-is (so the same shift/jitter/rescale can be shared across two
+        # ``forward`` calls); otherwise sample fresh (matches the original
+        # DINOv3 behavior).
+        if augment_state is None:
+            augment_state = self.sample_augment_state()
+        shift_hw, jitter_hw, rescale_hw = augment_state
+
         # Shift coords by adding a uniform value in [-shift, shift]
-        if self.training and self.shift_coords is not None:
-            shift_hw = torch.empty(2, **dd).uniform_(-self.shift_coords, self.shift_coords)
-            coords += shift_hw[None, :]
+        if shift_hw is not None:
+            coords = coords + shift_hw[None, :]
 
         # Jitter coords by multiplying the range [-1, 1] by a log-uniform value in [1/jitter, jitter]
-        if self.training and self.jitter_coords is not None:
-            jitter_max = np.log(self.jitter_coords)
-            jitter_min = -jitter_max
-            jitter_hw = torch.empty(2, **dd).uniform_(jitter_min, jitter_max).exp()
-            coords *= jitter_hw[None, :]
+        if jitter_hw is not None:
+            coords = coords * jitter_hw[None, :]
 
         # Rescale coords by multiplying the range [-1, 1] by a log-uniform value in [1/rescale, rescale]
-        if self.training and self.rescale_coords is not None:
-            rescale_max = np.log(self.rescale_coords)
-            rescale_min = -rescale_max
-            rescale_hw = torch.empty(1, **dd).uniform_(rescale_min, rescale_max).exp()
-            coords *= rescale_hw
+        if rescale_hw is not None:
+            coords = coords * rescale_hw
 
         # Prepare angles and sin/cos
         angles = 2 * math.pi * coords[:, :, None] / self.periods[None, None, :]  # [HW, 2, D//4]
