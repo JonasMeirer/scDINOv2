@@ -11,7 +11,11 @@ class Trafo:
             # no transform
             self.transform = lambda x: x
         else:
+<<<<<<< HEAD
             if model.name in ["dinov2", "dino", "dinov3", "dinov2_StrucPerc"]:
+=======
+            if model.name in ["dinov2", "dino", "dinov2_StrucPerc"]:
+>>>>>>> 3f31b054615ca87328595620f3fa08f4deecd5a3
                 self.transform = DINOTransform(cfg)
             else:
                 raise ValueError(
