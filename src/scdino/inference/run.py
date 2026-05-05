@@ -1,5 +1,6 @@
 import torch
 import hydra
+import numpy as np
 from tqdm import tqdm
 from omegaconf import DictConfig
 from pathlib import Path
@@ -9,6 +10,7 @@ import lightning as L
 from sklearn.metrics import silhouette_score
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+import umap
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
@@ -103,25 +105,28 @@ def run_inference(cfg: DictConfig):
             break
         
         # vizualise images and attn_heatmaps
-        if i==0 and callable(get_attn_heatmap):
-            attn_heatmaps = get_attn_heatmap(images, target_size=images.shape[-2:])
-            plt.figure(figsize=(6, 6))
-            nrows = 10
-            ncols = images.shape[1] + attn_heatmaps.shape[1]
-            for j in range(nrows):
-                for c in range(images.shape[1]):
-                    idx = j * ncols + c + 1
-                    plt.subplot(nrows, ncols, idx)
-                    plt.imshow(images[j, c].cpu().numpy(), cmap='gray')
-                    plt.axis('off')
-                for c in range(attn_heatmaps.shape[1]):
-                    idx = j * ncols + images.shape[1] + c + 1
-                    plt.subplot(nrows, ncols, idx)
-                    plt.imshow(attn_heatmaps[j, c].cpu().numpy(), cmap='viridis')
-                    plt.axis('off')
-            plt.tight_layout()
-            plt.savefig("attn_heatmap.png")
-            plt.show()
+        if i==0:
+            try:
+                attn_heatmaps = get_attn_heatmap(images, target_size=images.shape[-2:])
+                plt.figure(figsize=(6, 6))
+                nrows = 10
+                ncols = images.shape[1] + attn_heatmaps.shape[1]
+                for j in range(nrows):
+                    for c in range(images.shape[1]):
+                        idx = j * ncols + c + 1
+                        plt.subplot(nrows, ncols, idx)
+                        plt.imshow(images[j, c].cpu().numpy(), cmap='gray')
+                        plt.axis('off')
+                    for c in range(attn_heatmaps.shape[1]):
+                        idx = j * ncols + images.shape[1] + c + 1
+                        plt.subplot(nrows, ncols, idx)
+                        plt.imshow(attn_heatmaps[j, c].cpu().numpy(), cmap='viridis')
+                        plt.axis('off')
+                plt.tight_layout()
+                plt.savefig("attn_heatmap.png")
+                plt.show()
+            except Exception:
+                print(f"Attention heatmap not available for model {model_id}.")
         
         with torch.no_grad():
             train_features.append(embed(images.to(device)).detach().cpu())
@@ -159,20 +164,71 @@ def run_inference(cfg: DictConfig):
     print(f"kNN top1 accuracy: {results['top1']:.2f}%")
     print(f"kNN top5 accuracy: {results['top5']:.2f}%")
     
-    results["silhouette"] = silhouette_score(test_features.cpu().numpy(), 
-                                 test_labels.cpu().numpy(), 
-                                 sample_size=min(10_000, len(test_features.cpu().numpy())), 
+    test_features_np = test_features.cpu().numpy()
+    test_labels_np = test_labels.cpu().numpy()
+    sample_size = min(10_000, len(test_features_np))
+
+    results["silhouette"] = silhouette_score(test_features_np,
+                                 test_labels_np,
+                                 sample_size=sample_size,
                                  random_state=42)
     print(f"Silhouette score: {results['silhouette']:.4f}")
 
+    umap_cfg = cfg.eval.umap
+    reducer = umap.UMAP(
+        n_components=umap_cfg.n_components,
+        n_neighbors=umap_cfg.n_neighbors,
+        min_dist=umap_cfg.min_dist,
+        metric=umap_cfg.metric,
+        random_state=cfg.seed,
+    )
+    umap_features = reducer.fit_transform(test_features_np)
+    results["silhouette_umap"] = silhouette_score(umap_features,
+                                 test_labels_np,
+                                 sample_size=sample_size,
+                                 random_state=42)
+    print(f"Silhouette score (UMAP): {results['silhouette_umap']:.4f}")
+
+    hydra_out = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+    n_per_class = cfg.eval.viz.cells_per_class
+    class_names = getattr(datamodule.val_dataset, "classes", None)
+
+    rng = np.random.default_rng(cfg.seed)
+    viz_idx = []
+    for cls in np.unique(test_labels_np):
+        cls_idx = np.flatnonzero(test_labels_np == cls)
+        take = min(n_per_class, len(cls_idx))
+        viz_idx.append(rng.choice(cls_idx, size=take, replace=False))
+    viz_idx = np.concatenate(viz_idx)
+    viz_pts = umap_features[viz_idx, :2]
+    viz_lab = test_labels_np[viz_idx]
+
+    unique = np.unique(viz_lab)
+    cmap = plt.get_cmap("tab10" if len(unique) <= 10 else "tab20")
+    fig, ax = plt.subplots(figsize=(8, 8))
+    for i, cls in enumerate(unique):
+        m = viz_lab == cls
+        label = class_names[int(cls)] if class_names is not None else str(int(cls))
+        ax.scatter(viz_pts[m, 0], viz_pts[m, 1], s=4, alpha=0.6,
+                   color=cmap(i), label=label)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_title(f"UMAP of test embeddings (≤{n_per_class}/class)")
+    ax.legend(markerscale=3, loc="best", fontsize=9)
+    plt.tight_layout()
+    viz_path = hydra_out / "umap.png"
+    plt.savefig(viz_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved UMAP visualization to {viz_path}")
+
     # Get output directory
-    out_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    out_dir = Path(out_dir) / "results.json"
+    out_dir = hydra_out / "results.json"
     results = {
         "seed": cfg.seed,
-        "metrics": {"val_knn_top1": results['top1'], 
-                    "val_knn_top5": results['top5'], 
-                    "val_silhouette": results['silhouette']}
+        "metrics": {"val_knn_top1": results['top1'],
+                    "val_knn_top5": results['top5'],
+                    "val_silhouette": results['silhouette'],
+                    "val_silhouette_umap": results['silhouette_umap']}
     }
     with open(out_dir, "w") as f:
         json.dump(results, f)
