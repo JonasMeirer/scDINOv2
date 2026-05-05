@@ -24,6 +24,9 @@ dependencies = [
   "hydra-submitit-launcher>=1.2.0",
   "hydra-joblib-launcher>=1.2.0",
   "scikit-learn>=1.8.0",
+  "zarr>=3.1.6",
+  "pyarrow>=24.0.0",
+  "umap-learn>=0.5.12",
 ]
 
 [tool.uv.sources]
