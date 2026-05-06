@@ -14,10 +14,10 @@ architecture:
       img_size: 56
       patch_size: 4         # patch grid: 14x14
       # Token / attention sizes
-      embed_dim: 64
+      embed_dim: 128
       depth: 12
       num_heads: 8
-      ffn_ratio: 3
+      ffn_ratio: 4
       # Storage / register tokens (CLS is always present)
       n_storage_tokens: 4
       # Block / norm / FFN choices
@@ -31,7 +31,7 @@ architecture:
       untie_cls_and_patch_norms: false
       untie_global_and_local_cls_norm: true
       # Regularisation
-      drop_path_rate: 0.3
+      drop_path_rate: 0.1
       layerscale_init: 1.0e-5
       # 2D RoPE (DINOv3-style). Use either ``rope_base`` OR
       # ``rope_min_period`` + ``rope_max_period`` (not both).
@@ -46,8 +46,8 @@ architecture:
       rope_dtype: fp32           # 'fp32' | 'fp16' | 'bf16'
   # DINO head parameters
   dino_head:
-    embed_dim: 64
-    hidden_dim: 128
+    embed_dim: 128
+    hidden_dim: 256
     bottleneck_dim: 32
     output_dim: 2048
     batch_norm: false
@@ -64,7 +64,7 @@ architecture:
 
 training:
   # Trainer parameters
-  max_epochs: 20
+  max_epochs: 30
   # Optimizer parameters
   optimizer:
     lr: 8e-04
