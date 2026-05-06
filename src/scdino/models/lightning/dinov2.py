@@ -62,16 +62,12 @@ class DINOv2(L.LightningModule):
 
         self.dino_criterion = DINOLoss(
             output_dim=dino_loss_config["output_dim"],
-            warmup_teacher_temp=dino_loss_config["warmup_teacher_temp"],
-            teacher_temp=dino_loss_config["teacher_temp"],
-            warmup_teacher_temp_epochs=dino_loss_config["warmup_teacher_temp_epochs"],
             student_temp=dino_loss_config["student_temp"],
             center_momentum=dino_loss_config["center_momentum"],
             center_mode=dino_loss_config["center_mode"],
         )
         self.ibot_criterion = IBOTPatchLoss(
             output_dim=ibot_loss_config["output_dim"],
-            teacher_temp=ibot_loss_config["teacher_temp"],
             student_temp=ibot_loss_config["student_temp"],
             center_mode=ibot_loss_config["center_mode"],
             center_momentum=ibot_loss_config["center_momentum"],
@@ -206,12 +202,11 @@ class DINOv2(L.LightningModule):
         teacher_temp_config = self.training_config["teacher_temp"]
         teacher_temp = linear_warmup_schedule(
             step=self.trainer.global_step,
-            warmup_steps=self._epoch_warmup_to_steps(
-                teacher_temp_config["warmup_steps"]
-            ),
+            warmup_steps=teacher_temp_config["warmup_steps"],
             start_value=teacher_temp_config["start_value"],
             end_value=teacher_temp_config["end_value"],
         )
+        
         dino_loss = self.dino_criterion(
             teacher_out=teacher_cls_out.chunk(2),
             student_out=student_cls_out.chunk(len(views)),
@@ -341,10 +336,6 @@ class DINOv2(L.LightningModule):
         self.validation_labels.append(labels.cpu())
 
         return {"features": cls_tokens, "labels": labels}
-
-    def _epoch_warmup_to_steps(self, warmup_epochs: int) -> int:
-        """Convert an epoch-based warmup count to training steps."""
-        return int(warmup_epochs * len(self.trainer.train_dataloader))
 
     @staticmethod
     def _get_transformable_dataset(dataset):

@@ -41,9 +41,9 @@ training:
   # Optimizer parameters
   optimizer:
     lr: 8e-04
-  # Teacher temperature schedule
+  # Teacher temperature schedule (linear warmup over training STEPS)
   teacher_temp:
-    warmup_steps: 30
+    warmup_steps: 6000
     start_value: 0.04
     end_value: 0.07
   # Weight decay schedule
@@ -58,20 +58,16 @@ training:
   losses:
     dino:
       output_dim: 2048
-      warmup_teacher_temp: 0.04
-      teacher_temp: 0.04
-      warmup_teacher_temp_epochs: 30
       student_temp: 0.1
       center_momentum: 0.9
       center_mode: "mean"
       weight: 1.0
     ibot:
       output_dim: 2048
-      teacher_temp: 0.04
       student_temp: 0.1
       center_mode: "mean"
       center_momentum: 0.9
-      weight: 1.0    
+      weight: 1.0
     koleo:
       p: 2
       eps: 1e-8

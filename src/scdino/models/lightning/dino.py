@@ -11,7 +11,12 @@ import lightning as L
 
 from src.scdino.models.backbones.dino import DINO as DINOSkeleton
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
-from src.scdino.models.lightning.utils import DINOLoss, update_momentum, cosine_schedule
+from src.scdino.models.lightning.utils import (
+    DINOLoss,
+    update_momentum,
+    cosine_schedule,
+    linear_warmup_schedule,
+)
 from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
 
 
@@ -47,9 +52,6 @@ class DINO(L.LightningModule):
 
         self.dino_criterion = DINOLoss(
             output_dim=dino_loss_config["output_dim"],
-            warmup_teacher_temp=dino_loss_config["warmup_teacher_temp"],
-            teacher_temp=dino_loss_config["teacher_temp"],
-            warmup_teacher_temp_epochs=dino_loss_config["warmup_teacher_temp_epochs"],
             student_temp=dino_loss_config["student_temp"],
             center_momentum=dino_loss_config["center_momentum"],
             center_mode=dino_loss_config["center_mode"],
@@ -159,9 +161,17 @@ class DINO(L.LightningModule):
         # Student forward for all views
         student_out = [self.forward_student(view) for view in views]
 
-        # Compute DINO loss
+        teacher_temp_config = self.training_config["teacher_temp"]
+        teacher_temp = linear_warmup_schedule(
+            step=self.trainer.global_step,
+            warmup_steps=teacher_temp_config["warmup_steps"],
+            start_value=teacher_temp_config["start_value"],
+            end_value=teacher_temp_config["end_value"],
+        )
         loss = self.dino_criterion(
-            teacher_out=teacher_out, student_out=student_out, epoch=self.current_epoch
+            teacher_out=teacher_out,
+            student_out=student_out,
+            teacher_temp=teacher_temp,
         )
 
         # Log loss (both to pytorch lightning and wandb if enabled)
