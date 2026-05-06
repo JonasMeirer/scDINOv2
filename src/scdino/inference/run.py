@@ -180,7 +180,7 @@ def run_inference(cfg: DictConfig):
         n_neighbors=umap_cfg.n_neighbors,
         min_dist=umap_cfg.min_dist,
         metric=umap_cfg.metric,
-        random_state=cfg.seed,
+        #random_state=cfg.seed,
     )
     umap_features = reducer.fit_transform(test_features_np)
     results["silhouette_umap"] = silhouette_score(umap_features,
