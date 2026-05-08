@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/architecture
+    subdir: dinov2_seed${seed}

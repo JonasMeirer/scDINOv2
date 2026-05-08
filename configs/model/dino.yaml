@@ -32,7 +32,7 @@ architecture:
 
 training:
   # Trainer parameters
-  max_epochs: 20
+  max_epochs: 40
   # Optimizer parameters
   optimizer:
     lr: 8e-04
