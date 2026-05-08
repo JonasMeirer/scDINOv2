@@ -227,14 +227,15 @@ def run_inference(cfg: DictConfig):
     
     for k in [1, 10, 100, 1000]:
         scores = purity_at_k(same_label, k)
-        results[f"purity@{k}"] = format(scores.mean(), ".3f")
-        print(f"Purity@{k}: {results[f'purity@{k}'] }")
+        results[f"purity@{k}"] = scores.mean()
+        print(f"Purity@{k}: {results[f'purity@{k:.3f}'] }")
     
     results["val_purity@100_classes"] = {}
+    print("Purity@100 per class:")
     for cls in np.unique(y_class):
         mask = y_class == cls
-        results["val_purity@100_classes"][f"class_{cls}"] = format(purity_at_k(same_label, 100)[mask].mean(), ".3f")
-        print(cls, results["val_purity@100_classes"][f"class_{cls}"])
+        results["val_purity@100_classes"][f"class_{cls}"] = format(purity_at_k(same_label, 100)[mask].mean(), ".4f")
+        print("\t", cls, results["val_purity@100_classes"][f"class_{cls}"])
 
     hydra_out = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     n_per_class = cfg.eval.viz.cells_per_class
@@ -272,14 +273,14 @@ def run_inference(cfg: DictConfig):
     out_dir = hydra_out / "results.json"
     results = {
         "seed": cfg.seed,
-        "metrics": {"val_knn_top1": results['top1'],
-                    "val_knn_top5": results['top5'],
-                    "val_silhouette": results['silhouette'],
-                    "val_silhouette_umap": results['silhouette_umap'],
-                    "val_purity@1": results['purity@1'],
-                    "val_purity@10": results['purity@10'],
-                    "val_purity@100": results['purity@100'],
-                    "val_purity@1000": results['purity@1000'],
+        "metrics": {"val_knn_top1": format(results['top1'], ".4f"),
+                    "val_knn_top5": format(results['top5'], ".4f"),
+                    "val_silhouette": format(results['silhouette'], ".4f"),
+                    "val_silhouette_umap": format(results['silhouette_umap'], ".4f"),
+                    "val_purity@1": format(results['purity@1'], ".4f"),
+                    "val_purity@10": format(results['purity@10'], ".4f"),
+                    "val_purity@100": format(results['purity@100'], ".4f"),
+                    "val_purity@1000": format(results['purity@1000'], ".4f"),
                     "val_purity@100_classes": results['val_purity@100_classes'],
                     },
     }
