@@ -32,6 +32,9 @@ def run_inference(cfg: DictConfig):
 
     max_train_batches = cfg.max_train_batches if cfg.max_train_batches is not None else len(train_loader)
     max_val_batches = cfg.max_val_batches if cfg.max_val_batches is not None else len(val_loader)
+    n_cells_per_class = cfg.get("n_cells_per_class")
+    
+    assert n_cells_per_class > 0, "n_cells_per_class must be greater than 0"
 
     # Load the model
     device = torch.device(
@@ -177,12 +180,12 @@ def run_inference(cfg: DictConfig):
     print(f"Silhouette score: {results['silhouette']:.4f}")
     
     
-    # for UMAP, sample 1000 points per class
+    # for UMAP, sample n_cells_per_class points per class
     test_features_np_sampled = []
     test_labels_np_sampled = []
     for cls in unique_labels.cpu().numpy():
         cls_idx = np.flatnonzero(test_labels.cpu().numpy() == cls)
-        take = min(1000, len(cls_idx))
+        take = min(n_cells_per_class, len(cls_idx))
         selected_idx = np.random.choice(cls_idx, size=take, replace=False)
         test_features_np_sampled.append(test_features[selected_idx].cpu().numpy())
         test_labels_np_sampled.append(test_labels[selected_idx].cpu().numpy())
