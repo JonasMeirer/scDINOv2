@@ -12,12 +12,12 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import umap
 import pandas as pd
-from sklearn.neighbors import NearestNeighbors
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
 from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
+from src.scdino.eval.purity import compute_purity, purity_per_class
 
 
 @hydra.main(config_path="../../../configs", config_name="inference.yaml")
@@ -202,40 +202,26 @@ def run_inference(cfg: DictConfig):
                                  random_state=42)
     print(f"Silhouette score (UMAP): {results['silhouette_umap']:.4f}")
 
-    X = umap_features
     y = test_labels_np_sampled
     y_class = pd.Series(y).map({val: key for key, val in datamodule.val_dataset.class_to_idx.items()}).values
-    
-    max_k = 1000
-    nn = NearestNeighbors(
-        n_neighbors=max_k + 1,
-        algorithm="auto"
-    )
 
-    nn.fit(X)
-    distances, indices = nn.kneighbors(X)
+    ks = (1, 10, 100, 1000)
+    same_label, purities = compute_purity(test_features_np_sampled, y, ks=ks)
+    same_label_umap, purities_umap = compute_purity(umap_features, y, ks=ks)
+    for k in ks:
+        results[f"purity@{k}"] = purities[k]
+        results[f"purity_umap@{k}"] = purities_umap[k]
+        print(f"Purity@{k}: {purities[k]:.3f}  |  Purity_umap@{k}: {purities_umap[k]:.3f}")
 
-    # remove self-neighbor
-    indices = indices[:, 1:]
-    distances = distances[:, 1:]
-
-    neighbor_labels = y[indices]
-    same_label = neighbor_labels == y[:, None]
-    
-    def purity_at_k(same_label, k):
-        return same_label[:, :k].mean(axis=1)
-    
-    for k in [1, 10, 100, 1000]:
-        scores = purity_at_k(same_label, k)
-        results[f"purity@{k}"] = scores.mean()
-        print(f"Purity@{k}: {results[f'purity@{k:.3f}'] }")
-    
-    results["val_purity@100_classes"] = {}
     print("Purity@100 per class:")
-    for cls in np.unique(y_class):
-        mask = y_class == cls
-        results["val_purity@100_classes"][f"class_{cls}"] = format(purity_at_k(same_label, 100)[mask].mean(), ".4f")
-        print("\t", cls, results["val_purity@100_classes"][f"class_{cls}"])
+    per_class = purity_per_class(same_label, y_class, k=100)
+    per_class_umap = purity_per_class(same_label_umap, y_class, k=100)
+    results["val_purity@100_classes"] = {f"class_{cls}": format(v, ".4f") for cls, v in per_class.items()}
+    for cls, v in per_class.items():
+        print("\t", cls, format(v, ".4f"))
+    results["val_purity_umap@100_classes"] = {f"class_{cls}": format(v, ".4f") for cls, v in per_class_umap.items()}
+    for cls, v in per_class_umap.items():
+        print("\t", cls, format(v, ".4f"))
 
     hydra_out = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     n_per_class = cfg.eval.viz.cells_per_class
@@ -281,7 +267,12 @@ def run_inference(cfg: DictConfig):
                     "val_purity@10": format(results['purity@10'], ".4f"),
                     "val_purity@100": format(results['purity@100'], ".4f"),
                     "val_purity@1000": format(results['purity@1000'], ".4f"),
+                    "val_purity_umap@1": format(results['purity_umap@1'], ".4f"),
+                    "val_purity_umap@10": format(results['purity_umap@10'], ".4f"),
+                    "val_purity_umap@100": format(results['purity_umap@100'], ".4f"),
+                    "val_purity_umap@1000": format(results['purity_umap@1000'], ".4f"),
                     "val_purity@100_classes": results['val_purity@100_classes'],
+                    "val_purity_umap@100_classes": results['val_purity_umap@100_classes'],
                     },
     }
     with open(out_dir, "w") as f:
