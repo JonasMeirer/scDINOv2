@@ -1,11 +1,10 @@
 # @package _global_
-# Model size benchmark: tiny ViT (embed_dim=128, depth=6, num_heads=4).
 
 defaults:
-  - override /model: dinov2
+  - override /model: dino
   - override /logging: console
 
-max_batches: null
+eval_only_at_end: true
 model:
   architecture:
     backbone:
@@ -23,4 +22,4 @@ model:
 hydra:
   sweep:
     dir: outputs/benchmark/model_size
-    subdir: tiny_seed${seed}
+    subdir: dino_small_seed${seed}

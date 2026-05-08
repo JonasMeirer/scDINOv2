@@ -1,0 +1,25 @@
+# @package _global_
+
+defaults:
+  - override /model: dino
+  - override /logging: console
+
+eval_only_at_end: true
+model:
+  architecture:
+    backbone:
+      vit:
+        embed_dim: 256
+        depth: 16
+        num_heads: 8
+    dino_head:
+      embed_dim: 256
+      hidden_dim: 512
+    ibot_head:
+      embed_dim: 256
+      hidden_dim: 512
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/model_size
+    subdir: dino_large_seed${seed}

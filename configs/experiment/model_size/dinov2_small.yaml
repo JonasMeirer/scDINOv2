@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+eval_only_at_end: true
+model:
+  architecture:
+    backbone:
+      vit:
+        embed_dim: 64
+        depth: 6
+        num_heads: 4
+    dino_head:
+      embed_dim: 64
+      hidden_dim: 128
+    ibot_head:
+      embed_dim: 64
+      hidden_dim: 128
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/model_size
+    subdir: dinov2_small_seed${seed}

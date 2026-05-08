@@ -18,17 +18,23 @@ from pathlib import Path
 import pandas as pd
 
 
-METRIC_COLS = ["val_knn_top1", "val_knn_top5", "val_silhouette"]
+METRIC_COLS = ["val_knn_top1", "val_knn_top5", "val_silhouette", 
+               "val_purity@1", "val_purity@10", "val_purity@100", "val_purity@1000", 
+               "val_purity_umap@1", "val_purity_umap@10", "val_purity_umap@100", "val_purity_umap@1000"]
 
 FLAT_KEYS = {
     "seed": lambda r: r.get("seed"),
     "val_knn_top1": lambda r: (r.get("metrics") or {}).get("val_knn_top1"),
     "val_knn_top5": lambda r: (r.get("metrics") or {}).get("val_knn_top5"),
     "val_silhouette": lambda r: (r.get("metrics") or {}).get("val_silhouette"),
-    "num_parameters": lambda r: (r.get("model") or {}).get("num_parameters"),
-    "num_train_samples": lambda r: (r.get("data") or {}).get("num_train_samples"),
-    "wall_time_seconds": lambda r: (r.get("runtime") or {}).get("wall_time_seconds"),
-    "gpu": lambda r: (r.get("runtime") or {}).get("gpu"),
+    "val_purity@1": lambda r: (r.get("metrics") or {}).get("val_purity@1"),
+    "val_purity@10": lambda r: (r.get("metrics") or {}).get("val_purity@10"),
+    "val_purity@100": lambda r: (r.get("metrics") or {}).get("val_purity@100"),
+    "val_purity@1000": lambda r: (r.get("metrics") or {}).get("val_purity@1000"),
+    "val_purity_umap@1": lambda r: (r.get("metrics") or {}).get("val_purity_umap@1"),
+    "val_purity_umap@10": lambda r: (r.get("metrics") or {}).get("val_purity_umap@10"),
+    "val_purity_umap@100": lambda r: (r.get("metrics") or {}).get("val_purity_umap@100"),
+    "val_purity_umap@1000": lambda r: (r.get("metrics") or {}).get("val_purity_umap@1000"),
 }
 
 
@@ -94,7 +100,12 @@ def main() -> None:
     print(df.to_string(index=False))
     
     df["experiment"] = df["run_dir"].apply(lambda x: "_".join(x.split("/")[-1].split("_")[:-1]))
-
+    
+    if "run_dir" in df.columns:
+        df = df.drop(columns=["run_dir"], inplace=False)
+        # set all dtypes to float
+        df = df.astype({col: float for col in df.columns if col != "experiment"}, errors="ignore")
+        
     agg = aggregate(df, "experiment")
     if not agg.empty:
         agg_path = out_dir / "benchmark_summary_agg.csv"
