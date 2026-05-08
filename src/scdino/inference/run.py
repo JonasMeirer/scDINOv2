@@ -11,6 +11,8 @@ from sklearn.metrics import silhouette_score
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import umap
+import pandas as pd
+from sklearn.neighbors import NearestNeighbors
 
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
@@ -173,6 +175,19 @@ def run_inference(cfg: DictConfig):
                                  sample_size=sample_size,
                                  random_state=42)
     print(f"Silhouette score: {results['silhouette']:.4f}")
+    
+    
+    # for UMAP, sample 1000 points per class
+    test_features_np_sampled = []
+    test_labels_np_sampled = []
+    for cls in unique_labels.cpu().numpy():
+        cls_idx = np.flatnonzero(test_labels.cpu().numpy() == cls)
+        take = min(1000, len(cls_idx))
+        selected_idx = np.random.choice(cls_idx, size=take, replace=False)
+        test_features_np_sampled.append(test_features[selected_idx].cpu().numpy())
+        test_labels_np_sampled.append(test_labels[selected_idx].cpu().numpy())
+    test_features_np_sampled = np.concatenate(test_features_np_sampled, axis=0)
+    test_labels_np_sampled = np.concatenate(test_labels_np_sampled, axis=0)
 
     umap_cfg = cfg.eval.umap
     reducer = umap.UMAP(
@@ -180,14 +195,46 @@ def run_inference(cfg: DictConfig):
         n_neighbors=umap_cfg.n_neighbors,
         min_dist=umap_cfg.min_dist,
         metric=umap_cfg.metric,
-        #random_state=cfg.seed,
     )
-    umap_features = reducer.fit_transform(test_features_np)
+    umap_features = reducer.fit_transform(test_features_np_sampled)
     results["silhouette_umap"] = silhouette_score(umap_features,
-                                 test_labels_np,
-                                 sample_size=sample_size,
+                                 test_labels_np_sampled,
                                  random_state=42)
     print(f"Silhouette score (UMAP): {results['silhouette_umap']:.4f}")
+
+    X = umap_features
+    y = test_labels_np_sampled
+    y_class = pd.Series(y).map({val: key for key, val in datamodule.val_dataset.class_to_idx.items()}).values
+    
+    max_k = 1000
+    nn = NearestNeighbors(
+        n_neighbors=max_k + 1,
+        algorithm="auto"
+    )
+
+    nn.fit(X)
+    distances, indices = nn.kneighbors(X)
+
+    # remove self-neighbor
+    indices = indices[:, 1:]
+    distances = distances[:, 1:]
+
+    neighbor_labels = y[indices]
+    same_label = neighbor_labels == y[:, None]
+    
+    def purity_at_k(same_label, k):
+        return same_label[:, :k].mean(axis=1)
+    
+    for k in [1, 10, 100, 1000]:
+        scores = purity_at_k(same_label, k)
+        results[f"purity@{k}"] = format(scores.mean(), ".3f")
+        print(f"Purity@{k}: {results[f'purity@{k}'] }")
+    
+    results["val_purity@100_classes"] = {}
+    for cls in np.unique(y_class):
+        mask = y_class == cls
+        results["val_purity@100_classes"][f"class_{cls}"] = format(purity_at_k(same_label, 100)[mask].mean(), ".3f")
+        print(cls, results["val_purity@100_classes"][f"class_{cls}"])
 
     hydra_out = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     n_per_class = cfg.eval.viz.cells_per_class
@@ -195,13 +242,13 @@ def run_inference(cfg: DictConfig):
 
     rng = np.random.default_rng(cfg.seed)
     viz_idx = []
-    for cls in np.unique(test_labels_np):
-        cls_idx = np.flatnonzero(test_labels_np == cls)
+    for cls in np.unique(test_labels_np_sampled):
+        cls_idx = np.flatnonzero(test_labels_np_sampled == cls)
         take = min(n_per_class, len(cls_idx))
         viz_idx.append(rng.choice(cls_idx, size=take, replace=False))
     viz_idx = np.concatenate(viz_idx)
     viz_pts = umap_features[viz_idx, :2]
-    viz_lab = test_labels_np[viz_idx]
+    viz_lab = test_labels_np_sampled[viz_idx]
 
     unique = np.unique(viz_lab)
     cmap = plt.get_cmap("tab10" if len(unique) <= 10 else "tab20")
@@ -228,7 +275,13 @@ def run_inference(cfg: DictConfig):
         "metrics": {"val_knn_top1": results['top1'],
                     "val_knn_top5": results['top5'],
                     "val_silhouette": results['silhouette'],
-                    "val_silhouette_umap": results['silhouette_umap']}
+                    "val_silhouette_umap": results['silhouette_umap'],
+                    "val_purity@1": results['purity@1'],
+                    "val_purity@10": results['purity@10'],
+                    "val_purity@100": results['purity@100'],
+                    "val_purity@1000": results['purity@1000'],
+                    "val_purity@100_classes": results['val_purity@100_classes'],
+                    },
     }
     with open(out_dir, "w") as f:
         json.dump(results, f)
