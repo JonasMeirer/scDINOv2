@@ -1,14 +1,14 @@
 defaults:
   - datamodule: chronotype
-  - model: pretrained/dinov3-vits16 # pretrained/dinov3-vits16 #pretrained/dinov2-large #dinov3-vitb16
+  - model: dinov2 # pretrained/dinov3-vits16 #pretrained/dinov2-large #dinov3-vitb16
   - _self_
 
 mode: "inference" # needed for the transformation
 seed: 42
 max_train_batches: 1000 # limit processed batches
 max_val_batches: 1000 # limit processed batches
-n_cells_per_class: 2000 # limit number of cells per class for inference
-local_model_path:  # set to local HuggingFace model dir for scdino models, e.g. "outputs/train/.../hf_model", or null
+n_cells_per_class: 1000 # limit number of cells per class for inference
+local_model_path:  /home/jonas/Documents/Projects/active/scDINO/outputs/train/dinov2_chronotype/2026-05-05/15-25-29/hf_model # set to local HuggingFace model dir for scdino models, e.g. "outputs/train/.../hf_model", or null
 channel_adaptation_flavor: "DINO4CELL_CONCAT" # "mean", "pick_1", "pick_2", "pick_3", "DINO4CELL_CONCAT", "DINO4CELL_MEAN"; only used for pretrained models to adapt them to non 3 channel images
 
 # Hardware configuration
@@ -36,11 +36,13 @@ eval:
   viz:
     cells_per_class: 1000
   hdbscan:
-    enabled: false
+    enabled: true
     min_cluster_size: 50
     min_samples: 5
     metric: "euclidean"
-    plot_distance_matrix: false
+    l2_normalize: true # for l2 normalised features euclidean distance is equivalent to cosine similarity
+    cluster_selection_method: "leaf"
+    plot_distance_matrix: true
 
 # Hydra configuration
 hydra:

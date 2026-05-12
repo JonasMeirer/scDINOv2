@@ -191,12 +191,15 @@ def run_hdbscan(features, hdbscan_cfg, plot_path=None):
         min_cluster_size=hdbscan_cfg.min_cluster_size,
         min_samples=hdbscan_cfg.min_samples,
         metric=hdbscan_cfg.metric,
+        cluster_selection_method=hdbscan_cfg.cluster_selection_method,
     )
+    if hdbscan_cfg.l2_normalize:
+        features = features / np.linalg.norm(features, axis=1, keepdims=True)
     labels = clusterer.fit_predict(features)
     n_clusters = int(len(set(labels)) - (1 if -1 in labels else 0))
     n_noise = int((labels == -1).sum())
     print(f"HDBSCAN: {n_clusters} clusters, {n_noise} noise points "
-          f"({n_noise / len(labels) * 100:.1f}%)")
+            f"({n_noise / len(labels) * 100:.1f}%)")
 
     mask = labels != -1
     if n_clusters >= 2 and mask.sum() >= 2:
