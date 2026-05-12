@@ -1,3 +1,4 @@
+import time
 import torch
 import hydra
 import numpy as np
@@ -105,6 +106,8 @@ def run_inference(cfg: DictConfig):
     train_labels = []
     test_features = []
     test_labels = []
+    infer_samples = 0
+    infer_seconds = 0.0
     for i, (images, labels) in tqdm(enumerate(train_loader), total=max_train_batches):
         if i >= max_train_batches:
             break
@@ -134,15 +137,37 @@ def run_inference(cfg: DictConfig):
                 print(f"Attention heatmap not available for model {model_id}.")
         
         with torch.no_grad():
-            train_features.append(embed(images.to(device)).detach().cpu())
+            images_dev = images.to(device)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            feats = embed(images_dev)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            infer_seconds += time.perf_counter() - t0
+            infer_samples += images_dev.shape[0]
+            train_features.append(feats.detach().cpu())
             train_labels.append(labels)
 
     for i, (images, labels) in tqdm(enumerate(val_loader), total=max_val_batches):
         if i >= max_val_batches:
             break
         with torch.no_grad():
-            test_features.append(embed(images.to(device)).detach().cpu())
+            images_dev = images.to(device)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            feats = embed(images_dev)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            infer_seconds += time.perf_counter() - t0
+            infer_samples += images_dev.shape[0]
+            test_features.append(feats.detach().cpu())
             test_labels.append(labels)
+
+    throughput_samples_per_min = (infer_samples / infer_seconds) * 60.0 if infer_seconds > 0 else float("nan")
+    print(f"Inference throughput: {throughput_samples_per_min:.2f} samples/min "
+          f"({infer_samples} samples in {infer_seconds:.2f}s)")
 
     train_features = torch.cat(train_features, dim=0)
     train_labels = torch.cat(train_labels, dim=0)
@@ -298,6 +323,7 @@ def run_inference(cfg: DictConfig):
                     "val_purity_umap@1000": format(results['purity_umap@1000'], ".4f"),
                     "val_purity@100_classes": results['val_purity@100_classes'],
                     "val_purity_umap@100_classes": results['val_purity_umap@100_classes'],
+                    "inference_throughput_samples_per_min": format(throughput_samples_per_min, ".2f"),
                     },
     }
     with open(out_dir, "w") as f:
