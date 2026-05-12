@@ -11,8 +11,10 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import datetime
@@ -641,11 +643,14 @@ def main():
         if args.feature_workers > 1
         else nullcontext(None)
     )
+    processed_samples = 0
+    elapsed_seconds = 0.0
     with pool_ctx as feature_pool:
         for start in tqdm(
             range(0, len(all_paths), args.batch_size), total=n_batches, desc="Batches"
         ):
             batch_paths = all_paths[start : start + args.batch_size]
+            t0 = time.perf_counter()
             try:
                 records = process_batch(
                     batch_paths,
@@ -655,12 +660,40 @@ def main():
                     feature_chunk_size=args.feature_chunk_size,
                 )
                 all_records.extend(records)
+                processed_samples += len(batch_paths)
             except Exception:
                 logger.exception("Failed batch starting at index %d", start)
+            elapsed_seconds += time.perf_counter() - t0
+
+    throughput_samples_per_min = (
+        (processed_samples / elapsed_seconds) * 60.0
+        if elapsed_seconds > 0
+        else float("nan")
+    )
+    logger.info(
+        "Inference throughput: %.2f samples/min (%d samples in %.2fs)",
+        throughput_samples_per_min,
+        processed_samples,
+        elapsed_seconds,
+    )
 
     features_df = pd.DataFrame(all_records)
     features_df.to_csv(output_path, index=False)
     logger.info("Saved %d feature rows to %s", len(features_df), output_path)
+
+    metrics_path = output_path.with_suffix(".metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(
+            {
+                "inference_throughput_samples_per_min": format(
+                    throughput_samples_per_min, ".2f"
+                ),
+                "processed_samples": processed_samples,
+                "elapsed_seconds": format(elapsed_seconds, ".2f"),
+            },
+            f,
+        )
+    logger.info("Saved metrics to %s", metrics_path)
 
 
 if __name__ == "__main__":
