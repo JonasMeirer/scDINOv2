@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+  - override /model: dinov2
+  - override /logging: console
+
+max_batches: null
+datamodule:
+  loader:
+    norm_type: "robust"
+
+hydra:
+  sweep:
+    dir: outputs/benchmark/normalisation
+    subdir: robust_1_seed${seed}
