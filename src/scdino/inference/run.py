@@ -183,14 +183,20 @@ def run_inference(cfg: DictConfig):
     # for UMAP, sample n_cells_per_class points per class
     test_features_np_sampled = []
     test_labels_np_sampled = []
+    sampled_orig_idx = []
     for cls in unique_labels.cpu().numpy():
         cls_idx = np.flatnonzero(test_labels.cpu().numpy() == cls)
         take = min(n_cells_per_class, len(cls_idx))
         selected_idx = np.random.choice(cls_idx, size=take, replace=False)
         test_features_np_sampled.append(test_features[selected_idx].cpu().numpy())
         test_labels_np_sampled.append(test_labels[selected_idx].cpu().numpy())
+        sampled_orig_idx.append(selected_idx)
     test_features_np_sampled = np.concatenate(test_features_np_sampled, axis=0)
     test_labels_np_sampled = np.concatenate(test_labels_np_sampled, axis=0)
+    sampled_orig_idx = np.concatenate(sampled_orig_idx, axis=0)
+
+    preds_np = probs.argmax(dim=1).cpu().numpy()
+    correct_sampled = preds_np[sampled_orig_idx] == test_labels_np_sampled
 
     umap_cfg = cfg.eval.umap
     reducer = umap.UMAP(
@@ -257,6 +263,22 @@ def run_inference(cfg: DictConfig):
     plt.savefig(viz_path, dpi=150)
     plt.close(fig)
     print(f"Saved UMAP visualization to {viz_path}")
+
+    viz_correct = correct_sampled[viz_idx]
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.scatter(viz_pts[viz_correct, 0], viz_pts[viz_correct, 1],
+               s=4, alpha=0.6, color="lightgray", label="correct")
+    ax.scatter(viz_pts[~viz_correct, 0], viz_pts[~viz_correct, 1],
+               s=4, alpha=0.6, color="red", label="incorrect")
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_title(f"UMAP of test embeddings — kNN correctness (≤{n_per_class}/class)")
+    ax.legend(markerscale=3, loc="best", fontsize=9)
+    plt.tight_layout()
+    viz_correctness_path = hydra_out / "umap_correctness.png"
+    plt.savefig(viz_correctness_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved UMAP correctness visualization to {viz_correctness_path}")
 
     # Get output directory
     out_dir = hydra_out / "results.json"
