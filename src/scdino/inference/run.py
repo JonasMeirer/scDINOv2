@@ -19,6 +19,7 @@ from src.scdino.inference.utils import (
     plot_umap_correctness,
     run_hdbscan,
     sample_per_class,
+    sync_with_training_config,
 )
 
 
@@ -26,6 +27,8 @@ from src.scdino.inference.utils import (
 def run_inference(cfg: DictConfig):
     L.seed_everything(cfg.seed, workers=True)
     hydra_out = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+
+    sync_with_training_config(cfg)
 
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     datamodule.setup("predict")

@@ -1,11 +1,13 @@
 """Helpers for inference: model construction, embedding extraction, viz, clustering."""
 
 import time
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
+from omegaconf import DictConfig, OmegaConf, open_dict
 from sklearn.metrics import silhouette_score
 from tqdm import tqdm
 from transformers import AutoModel
@@ -13,6 +15,37 @@ from transformers import AutoModel
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
 from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
+
+
+def sync_with_training_config(cfg: DictConfig) -> None:
+    """For a local scDINO checkpoint, override model/preprocessing on `cfg` to match training.
+
+    No-op when no `local_model_path` is set (pretrained `facebook/...` path) or when
+    `cfg.model.name` does not start with "dino". Otherwise reads the training run's
+    `.hydra/config.yaml` (sibling of the checkpoint dir) and overwrites fields that
+    affect model architecture and image preprocessing. Hardware/runtime fields, eval
+    settings, paths, seed, and mode are left untouched.
+    """
+    local_path = cfg.get("local_model_path")
+    if not local_path:
+        return
+    if not cfg.model.name.startswith("dino"):
+        return
+
+    train_cfg_path = Path(local_path).parent / ".hydra" / "config.yaml"
+    if not train_cfg_path.exists():
+        raise FileNotFoundError(
+            f"Expected training config at {train_cfg_path} for local_model_path={local_path}"
+        )
+    train_cfg = OmegaConf.load(train_cfg_path)
+
+    with open_dict(cfg):
+        cfg.model = train_cfg.model
+        cfg.datamodule.transforms = train_cfg.datamodule.transforms
+        for key in ("num_channels", "norm_type", "norm_dict", "max_vals_clip"):
+            cfg.datamodule.loader[key] = train_cfg.datamodule.loader[key]
+
+    print(f"Synced model + preprocessing config from {train_cfg_path}")
 
 
 def build_model(model_id, flavor, num_channels, device):
