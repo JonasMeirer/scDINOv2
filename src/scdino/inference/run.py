@@ -15,6 +15,7 @@ from src.scdino.eval.purity import compute_purity, purity_per_class
 from src.scdino.inference.utils import (
     build_model,
     extract_features,
+    plot_confusion_matrix,
     plot_umap_by_class,
     plot_umap_correctness,
     run_hdbscan,
@@ -142,6 +143,16 @@ def run_inference(cfg: DictConfig):
     print(f"Saved UMAP visualization to {hydra_out / 'umap.png'}")
     plot_umap_correctness(viz_pts, viz_correct, n_per_class, hydra_out / "umap_correctness.png")
     print(f"Saved UMAP correctness visualization to {hydra_out / 'umap_correctness.png'}")
+
+    cm_cfg = cfg.eval.get("confusion_matrix")
+    if cm_cfg is not None and cm_cfg.get("enabled", False):
+        class_names = getattr(datamodule.val_dataset, "classes", None)
+        cm_path = hydra_out / "confusion_matrix.png"
+        plot_confusion_matrix(
+            test_labels_np, preds_np, class_names, cm_path,
+            normalize=cm_cfg.get("normalize", True),
+        )
+        print(f"Saved confusion matrix to {cm_path}")
 
     hdbscan_cfg = cfg.eval.get("hdbscan")
     if hdbscan_cfg is not None and hdbscan_cfg.get("enabled", False):

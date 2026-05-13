@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf, open_dict
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import confusion_matrix, silhouette_score
 from tqdm import tqdm
 from transformers import AutoModel
 
@@ -204,6 +204,54 @@ def plot_umap_correctness(viz_pts, viz_correct, n_per_class, path):
     ax.set_ylabel("UMAP 2")
     ax.set_title(f"UMAP of test embeddings — kNN correctness (≤{n_per_class}/class)")
     ax.legend(markerscale=3, loc="best", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_confusion_matrix(y_true, y_pred, class_names, path, normalize=True):
+    """Save a confusion matrix heatmap. If `normalize`, rows sum to 1 (recall per class)."""
+    labels = np.arange(len(class_names)) if class_names is not None else None
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    if normalize:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cm_disp = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+            cm_disp = np.nan_to_num(cm_disp)
+        vmin, vmax, fmt = 0.0, 1.0, ".2f"
+        cbar_label = "Fraction (row-normalized)"
+        title = "Confusion matrix (row-normalized)"
+    else:
+        cm_disp = cm
+        vmin, vmax, fmt = 0, cm.max() if cm.size else 1, "d"
+        cbar_label = "Count"
+        title = "Confusion matrix"
+
+    n = cm_disp.shape[0]
+    tick_labels = (
+        [class_names[i] for i in range(n)] if class_names is not None else [str(i) for i in range(n)]
+    )
+    side = max(6, 0.5 * n + 2)
+    fig, ax = plt.subplots(figsize=(side, side))
+    im = ax.imshow(cm_disp, cmap="Blues", vmin=vmin, vmax=vmax)
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticklabels(tick_labels, fontsize=8)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_title(title)
+
+    if n <= 30:
+        thresh = (vmin + vmax) / 2.0 if normalize else cm_disp.max() / 2.0
+        for i in range(n):
+            for j in range(n):
+                ax.text(
+                    j, i, format(cm_disp[i, j], fmt),
+                    ha="center", va="center", fontsize=7,
+                    color="white" if cm_disp[i, j] > thresh else "black",
+                )
+
+    fig.colorbar(im, ax=ax, label=cbar_label, fraction=0.046, pad=0.04)
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close(fig)
