@@ -52,9 +52,11 @@ def run_inference(cfg: DictConfig):
 
     embed, attn_fn = build_model(model_id, flavor, num_channels, device)
 
+    ext = cfg.eval.get("plot_format", "png").lower()
+
     train_features, train_labels, train_n, train_t = extract_features(
         train_loader, embed, device, max_train_batches,
-        attn_fn=attn_fn, attn_path=hydra_out / "attn_heatmap.png",
+        attn_fn=attn_fn, attn_path=hydra_out / f"attn_heatmap.{ext}",
     )
     test_features, test_labels, test_n, test_t = extract_features(
         val_loader, embed, device, max_val_batches,
@@ -139,15 +141,17 @@ def run_inference(cfg: DictConfig):
     viz_lab = test_labels_np_sampled[viz_idx]
     viz_correct = correct_sampled[viz_idx]
 
-    plot_umap_by_class(viz_pts, viz_lab, n_per_class, class_names, hydra_out / "umap.png")
-    print(f"Saved UMAP visualization to {hydra_out / 'umap.png'}")
-    plot_umap_correctness(viz_pts, viz_correct, n_per_class, hydra_out / "umap_correctness.png")
-    print(f"Saved UMAP correctness visualization to {hydra_out / 'umap_correctness.png'}")
+    umap_path = hydra_out / f"umap.{ext}"
+    umap_correct_path = hydra_out / f"umap_correctness.{ext}"
+    plot_umap_by_class(viz_pts, viz_lab, n_per_class, class_names, umap_path)
+    print(f"Saved UMAP visualization to {umap_path}")
+    plot_umap_correctness(viz_pts, viz_correct, n_per_class, umap_correct_path)
+    print(f"Saved UMAP correctness visualization to {umap_correct_path}")
 
     cm_cfg = cfg.eval.get("confusion_matrix")
     if cm_cfg is not None and cm_cfg.get("enabled", False):
         class_names = getattr(datamodule.val_dataset, "classes", None)
-        cm_path = hydra_out / "confusion_matrix.png"
+        cm_path = hydra_out / f"confusion_matrix.{ext}"
         plot_confusion_matrix(
             test_labels_np, preds_np, class_names, cm_path,
             normalize=cm_cfg.get("normalize", True),
@@ -157,7 +161,7 @@ def run_inference(cfg: DictConfig):
     hdbscan_cfg = cfg.eval.get("hdbscan")
     if hdbscan_cfg is not None and hdbscan_cfg.get("enabled", False):
         plot_path = (
-            hydra_out / "hdbscan_cluster_distance_matrix.png"
+            hydra_out / f"hdbscan_cluster_distance_matrix.{ext}"
             if hdbscan_cfg.get("plot_distance_matrix", False)
             else None
         )
