@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf, open_dict
 from sklearn.metrics import confusion_matrix, silhouette_score
 from tqdm import tqdm
@@ -46,6 +47,10 @@ def sync_with_training_config(cfg: DictConfig) -> None:
             cfg.datamodule.loader[key] = train_cfg.datamodule.loader[key]
 
     print(f"Synced model + preprocessing config from {train_cfg_path}")
+
+    out_cfg_path = Path(HydraConfig.get().runtime.output_dir) / ".hydra" / "config.yaml"
+    OmegaConf.save(cfg, out_cfg_path)
+    print(f"Saved synced config to {out_cfg_path}")
 
 
 def build_model(model_id, flavor, num_channels, device):
