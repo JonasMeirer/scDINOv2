@@ -62,8 +62,7 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
                 self.max_train_samples is not None
                 and self.max_train_samples < len(self.train_dataset)
             ):
-                gen = torch.Generator().manual_seed(42)
-                indices = torch.randperm(len(self.train_dataset), generator=gen)[
+                indices = torch.randperm(len(self.train_dataset))[
                     : self.max_train_samples
                 ]
                 self.train_dataset = Subset(self.train_dataset, indices.tolist())

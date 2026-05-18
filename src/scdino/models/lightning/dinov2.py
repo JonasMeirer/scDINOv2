@@ -16,6 +16,7 @@ from src.scdino.models.lightning.utils import (
     DINOLoss,
     IBOTPatchLoss,
     KoLeoLoss,
+    #SIGRegLoss,
     update_momentum,
     cosine_schedule,
     linear_warmup_schedule,
@@ -218,6 +219,7 @@ class DINOv2(L.LightningModule):
             mask=block_mask,
             teacher_temp=teacher_temp,
         )
+        
         koleo_loss = sum(
             self.koleo_criterion(t) for t in student_global_cls_token.chunk(2)
         )

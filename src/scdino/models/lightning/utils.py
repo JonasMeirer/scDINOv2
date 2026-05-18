@@ -454,6 +454,58 @@ class KoLeoLoss(Module):
         return loss
 
 
+# class SIGRegLoss(Module):
+#     def __init__(
+#         self,
+#         knots: int = 17,
+#         num_slices: int = 256,
+#         max_t: float = 3.0,
+#     ):
+#         super().__init__()
+
+#         t = torch.linspace(0, max_t, knots, dtype=torch.float32)
+#         dt = max_t / (knots - 1)
+
+#         weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
+#         weights[[0, -1]] = dt
+
+#         phi = torch.exp(-t.square() / 2.0)
+
+#         self.num_slices = num_slices
+#         self.register_buffer("t", t)
+#         self.register_buffer("phi", phi)
+#         self.register_buffer("weights", weights * phi)
+
+#     def forward(self, x: Tensor) -> Tensor:
+#         """
+#         Args:
+#             x: Tensor with shape [batch_size, embedding_dim]
+#         """
+#         A = torch.randn(
+#             x.size(-1),
+#             self.num_slices,
+#             device=x.device,
+#             dtype=x.dtype,
+#         )
+#         A = A / A.norm(p=2, dim=0, keepdim=True).clamp_min(1e-8)
+
+#         t = self.t.to(dtype=x.dtype)
+#         phi = self.phi.to(dtype=x.dtype)
+#         weights = self.weights.to(dtype=x.dtype)
+
+#         x_t = (x @ A).unsqueeze(-1) * t
+
+#         real_err = (x_t.cos().mean(dim=0) - phi).square()
+#         imag_err = x_t.sin().mean(dim=0).square()
+
+#         err = real_err + imag_err
+
+#         statistic = (err @ weights) * x.size(0)
+
+#         return statistic.mean()   
+
+
+
 def random_block_mask(
     size: Tuple[int, int, int],
     batch_mask_ratio: float = 0.5,
