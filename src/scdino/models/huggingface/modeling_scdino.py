@@ -8,10 +8,17 @@ from timm.models.vision_transformer import VisionTransformer
 from timm.models.resnet import ResNet, BasicBlock
 
 from src.scdino.models.backbones.dinov2 import MaskedVisionTransformerTIMM
-from src.scdino.models.backbones.dinov2_StrucPerc import (
-    MaskedPerceiverStrucPerc,
-    PerceiverStrucPerc,
-)
+try: #rp edit - my uv didn't load these variants - so I skip them if they are not found. 
+    from src.scdino.models.backbones.dinov2_StrucPerc import (
+        MaskedPerceiverStrucPerc,
+        PerceiverStrucPerc,
+    )
+except ModuleNotFoundError:
+    # StrucPerc variant not present in this checkout; only needed if the
+    # 'dinov2_StrucPerc' model is selected. Safe to skip for dinov2.
+    MaskedPerceiverStrucPerc = None
+    PerceiverStrucPerc = None
+
 from src.scdino.models.backbones.dinov3 import (
     DinoVisionTransformer,
     MaskedDinoVisionTransformer,
