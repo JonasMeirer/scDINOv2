@@ -34,9 +34,18 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
 
         # TRANSFORMS
         self.norm_type = loader.get("norm_type", "robust")
+        self.channels = loader.get("channels", None) #rp added: to change input channels for the model (e.g. 5 channels for chronotype)
         self.max_vals_clip = loader.get("max_vals_clip", None)
         self.mean = loader.norm_dict.get(self.norm_type).get("mean")
         self.std = loader.norm_dict.get(self.norm_type).get("std")
+
+        if self.channels is not None: # rp addded: normalisation only with channels of interest 
+            idx = list(self.channels)
+            self.mean = [self.mean[i] for i in idx]
+            self.std = [self.std[i] for i in idx]
+            if self.max_vals_clip is not None:
+                self.max_vals_clip = [self.max_vals_clip[i] for i in idx]
+
         transforms.normalize = {"mean": self.mean, "std": self.std}  # needed for Trafo
         self.resize = transforms.get("resize", None)
         self.train_transform = Trafo(model, mode, transforms)
@@ -214,6 +223,8 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
     def load_tiff(self, path):
         img = tifffile.imread(path)  # (50, 50, 5)
 
+        if self.channels is not None: # rp added: to change input channels for the model (e.g. 5 channels for chronotype)
+            img = img[..., list(self.channels)]     # select specific channels
         if self.norm_type == "robust":
             img = normalize_numpy_robust(img)
         elif self.norm_type == "robust_2":
