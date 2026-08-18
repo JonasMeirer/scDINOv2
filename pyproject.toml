@@ -1,9 +1,25 @@
 [project]
 name = "scdino"
 version = "0.1.0"
-description = "Add your description here"
+description = "Self-supervised representation learning for multi-channel microscopy images with DINO, DINOv2 and DINOv3"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "licenses/*"]
+keywords = [
+  "self-supervised-learning",
+  "representation-learning",
+  "microscopy",
+  "single-cell",
+  "vision-transformer",
+  "dino",
+]
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Programming Language :: Python :: 3.11",
+]
 dependencies = [
   "torch==2.5.1",
   "torchvision==0.20.1",
@@ -28,6 +44,25 @@ dependencies = [
   "pyarrow>=24.0.0",
   "umap-learn>=0.5.12",
   "hdbscan>=0.8.42",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+]
+
+# The source tree is imported as `src.scdino.*` and only works with the repository
+# root as the working directory, so there is nothing to build or install.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore::UserWarning",
 ]
 
 [tool.uv.sources]
