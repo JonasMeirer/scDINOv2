@@ -2,6 +2,10 @@
 
 # Copyright (c) 2020. Lightly AG and its affiliates.
 # All Rights Reserved
+#
+# PROVENANCE (see THIRD_PARTY_NOTICES.md): this entire file is vendored from
+# Lightly (https://github.com/lightly-ai/lightly) and is used under Lightly's
+# MIT license, reproduced at licenses/lightly-MIT.txt.
 from __future__ import annotations
 
 import math

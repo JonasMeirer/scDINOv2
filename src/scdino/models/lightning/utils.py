@@ -1,3 +1,10 @@
+# PROVENANCE (see THIRD_PARTY_NOTICES.md): the losses, masking helpers and
+# schedules in this file are vendored from Lightly
+# (https://github.com/lightly-ai/lightly), Copyright (c) 2020 Lightly AG and
+# its affiliates, used under Lightly's MIT license, reproduced at
+# licenses/lightly-MIT.txt. The papers and reference implementations these are
+# based on are cited in the individual class docstrings.
+
 import torch
 from torch import Tensor
 from torch.nn import Module, Parameter, PairwiseDistance, functional

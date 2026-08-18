@@ -1,3 +1,10 @@
+# PROVENANCE (see THIRD_PARTY_NOTICES.md): the blocks in this file marked
+# "copy pasted from lightly" (ProjectionHead, DINOProjectionHead) are vendored
+# from Lightly (https://github.com/lightly-ai/lightly), Copyright (c) 2020
+# Lightly AG and its affiliates, used under Lightly's MIT license, reproduced
+# at licenses/lightly-MIT.txt. The remainder of this file is original scDINO
+# code under the repository's MIT LICENSE.
+
 import copy
 from typing import Dict, Any, Optional, Union, Sequence, Tuple, List
 from warnings import warn

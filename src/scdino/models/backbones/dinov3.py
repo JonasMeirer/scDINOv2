@@ -2,6 +2,22 @@
 #
 # This software may be used and distributed in accordance with
 # the terms of the DINOv3 License Agreement.
+#
+# ---------------------------------------------------------------------------
+# PROVENANCE (see THIRD_PARTY_NOTICES.md)
+#
+# This file has two regions, split by the "scDINO integration" banner further
+# down. Everything ABOVE that banner is vendored verbatim from Meta's DINOv3
+# reference implementation (https://github.com/facebookresearch/dinov3) and is
+# governed by the DINOv3 License Agreement, a copy of which is distributed with
+# this repository at licenses/DINOv3-License-Agreement.md. That Agreement is
+# NOT the MIT license that covers the rest of scDINO, and it carries
+# acceptable-use restrictions -- read it before using or redistributing.
+#
+# Everything BELOW that banner is original scDINO code under the repository's
+# MIT LICENSE. The split is deliberate so the vendored region can be re-synced
+# from upstream without merge pain; please keep new code below the banner.
+# ---------------------------------------------------------------------------
 
 import logging
 from functools import partial
