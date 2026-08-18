@@ -166,6 +166,18 @@ class DINOLoss(Module):
         n_terms = loss.numel() - loss.diagonal().numel()
         batch_size = teacher_out_stacked.shape[1]
 
+        # scDINO deviation from upstream Lightly: guard the degenerate case.
+        # With a single teacher and a single student view every pair lies on the
+        # excluded diagonal, so n_terms is 0 and the division below silently
+        # produces NaN. Fail loudly instead of poisoning the loss.
+        if n_terms == 0:
+            raise ValueError(
+                "DINOLoss received no off-diagonal view pairs "
+                f"({len(teacher_out)} teacher view(s), {len(student_out)} student "
+                "view(s)). Same-index view pairs are excluded, so at least one "
+                "side needs a second view."
+            )
+
         loss = loss.sum() / (n_terms * batch_size)
 
         # Update the center used for the teacher output

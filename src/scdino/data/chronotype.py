@@ -244,7 +244,9 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         else:
             raise ValueError(f"Invalid norm type: {self.norm_type}")
 
-        img = img.T  # (5, 50, 50)
+        # (H, W, C) -> (C, H, W). Note: `img.T` reverses *every* axis and would
+        # give (C, W, H), silently transposing the image.
+        img = np.transpose(img, (2, 0, 1))
         img = torch.from_numpy(img).float()
         if self.resize is not None:
             img = T.Resize(size=self.resize)(img)

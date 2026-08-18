@@ -32,6 +32,11 @@ def knn_classifier(
     """
     num_classes = num_classes or int(train_labels.max()) + 1
 
+    # Never ask for more neighbours than there are reference samples.
+    k = min(k, len(train_features))
+    if k < 1:
+        raise ValueError("knn_classifier needs at least one reference sample")
+
     # normalize once for cosine similarity
     train_features = F.normalize(train_features, dim=1)
     test_features = F.normalize(test_features, dim=1)
@@ -54,8 +59,12 @@ def knn_classifier(
 
             sims = queries @ chunk_feats.T  # (B, Nc)
 
-            sims_topk, idx_topk = sims.topk(k, dim=1, largest=True, sorted=False)
-            labels_topk = chunk_labels[idx_topk]  # (B, k)
+            # The final chunk can hold fewer than k rows, so clamp per chunk.
+            # Taking min(k, Nc) from every chunk still leaves at least k global
+            # candidates, so the two-stage search remains exact.
+            chunk_k = min(k, chunk_feats.size(0))
+            sims_topk, idx_topk = sims.topk(chunk_k, dim=1, largest=True, sorted=False)
+            labels_topk = chunk_labels[idx_topk]  # (B, chunk_k)
 
             all_sims.append(sims_topk)
             all_labels.append(labels_topk)
@@ -97,9 +106,10 @@ def compute_knn_accuracy(
         dict: accuracy results for each k
     """
     num_classes = probs.size(1)
-    # Drop any k that exceeds the number of classes: top-5 is undefined for a
-    # 2-class problem (and meaningless — top-2 would be trivially 100%).
-    topk = tuple(k for k in topk if k <= num_classes)
+    # Drop any k that is not smaller than the number of classes: top-k where
+    # k == num_classes is trivially 100% (every class is in the ranking), and
+    # k > num_classes is undefined.
+    topk = tuple(k for k in topk if k < num_classes)
     if not topk:
         topk = (1,)
     maxk = max(topk)

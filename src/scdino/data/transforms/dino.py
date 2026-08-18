@@ -119,6 +119,7 @@ class DINOTransform(MultiViewTransform):
         local_crop_size = cfg.get("local_crop_size", 30)
         local_crop_scale = cfg.get("local_crop_scale", (0.05, 0.4))
         n_local_views = cfg.get("n_local_views", 6)
+        do_center_crop = cfg.get("do_center_crop", False)
         hf_prob = cfg.get("hf_prob", 0.5)
         vf_prob = cfg.get("vf_prob", 0.5)
         rr_prob = cfg.get("rr_prob", 0.5)
@@ -141,6 +142,7 @@ class DINOTransform(MultiViewTransform):
         normalize = cfg.get("normalize")
 
         shared_kwargs = dict(
+            do_center_crop=do_center_crop,
             hf_prob=hf_prob,
             vf_prob=vf_prob,
             rr_prob=rr_prob,
