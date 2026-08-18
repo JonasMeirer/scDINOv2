@@ -20,7 +20,8 @@ import pandas as pd
 
 METRIC_COLS = ["val_knn_top1", "val_knn_top5", "val_silhouette", 
                "val_purity@1", "val_purity@10", "val_purity@100", "val_purity@1000", 
-               "val_purity_umap@1", "val_purity_umap@10", "val_purity_umap@100", "val_purity_umap@1000"]
+               "val_purity_umap@1", "val_purity_umap@10", "val_purity_umap@100", "val_purity_umap@1000"
+               ]
 
 FLAT_KEYS = {
     "seed": lambda r: r.get("seed"),

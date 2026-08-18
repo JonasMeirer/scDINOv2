@@ -35,8 +35,6 @@ def write_feature_store(
     features_shuffled = all_features[perm]
     paths_shuffled = all_paths[perm]
     
-    import code; code.interact(local=dict(globals(), **locals()))
-    
     # Create a 2D Zarr array
     z = zarr.create_array(
         store=f"{out_dir}/features.zarr",
@@ -146,20 +144,20 @@ def run_embed(cfg: DictConfig):
         all_paths.extend(paths)
         i += images.shape[0]
 
-    i=0
-    for images, _ in tqdm(val_loader):
-        with torch.no_grad():
-            test_features.append(embed(images.to(device)).detach().cpu())
+    # i=0
+    # for images, _ in tqdm(val_loader):
+    #     with torch.no_grad():
+    #         test_features.append(embed(images.to(device)).detach().cpu())
             
-        samples = val_loader.dataset.samples[i:i+images.shape[0]]
-        paths = [s[0] for s in samples]
-        all_paths.extend(paths)
-        i += images.shape[0]
+    #     samples = val_loader.dataset.samples[i:i+images.shape[0]]
+    #     paths = [s[0] for s in samples]
+    #     all_paths.extend(paths)
+    #     i += images.shape[0]
 
     train_features = torch.cat(train_features, dim=0)
-    test_features = torch.cat(test_features, dim=0)
+    #test_features = torch.cat(test_features, dim=0)
     
-    all_features = torch.cat([train_features, test_features], dim=0) # (N, D)
+    all_features = train_features # torch.cat([train_features, test_features], dim=0) # (N, D)
     
     write_feature_store(
         all_features=all_features,
