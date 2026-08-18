@@ -1,5 +1,9 @@
 # @package _global_
-# Ablation: Change to center crop
+# Ablation: replace the random resized crop with a deterministic centre crop.
+#
+# Applies to global and local views alike, so every local view is taken from the
+# same centre region and multi-crop loses its scale/position diversity. The
+# photometric and flip/rotation augmentations still differ between views.
 
 defaults:
   - override /model: dinov2
