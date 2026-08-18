@@ -109,6 +109,15 @@ class TestPerChannelWrapper:
         assert len(seen) == 5
         assert all(shape[1] == 3 for shape in seen)
 
+    def test_rejects_an_unknown_flavor_at_construction(self, base_model):
+        """Fail fast, and with a ValueError rather than a NameError."""
+        with pytest.raises(ValueError, match="Unknown flavor"):
+            PerChannelWrapper(base_model, lambda o: o, num_channels=5, flavor="bogus")
+
+    def test_error_lists_the_valid_flavors(self, base_model):
+        with pytest.raises(ValueError, match="concat"):
+            PerChannelWrapper(base_model, lambda o: o, num_channels=5, flavor="bogus")
+
     def test_runs_without_grad(self, base_model):
         out = PerChannelWrapper(base_model, lambda o: o, 5)(torch.randn(2, 5, 16, 16))
         assert not out.requires_grad

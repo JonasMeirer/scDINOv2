@@ -70,6 +70,23 @@ class TestDINOLoss:
         # centre = 0.5 * 0 + 0.5 * mean(teacher) = 2.0
         assert torch.allclose(loss_fn.center, torch.full((1, 1, 4), 2.0))
 
+    def test_rejects_a_degenerate_single_view_batch(self):
+        """One view per side leaves every pair on the excluded diagonal.
+
+        n_terms is then 0; the loss used to divide by it and return a silent
+        NaN. It must raise instead.
+        """
+        out = torch.randn(4, 8)
+        with pytest.raises(ValueError, match="off-diagonal view pairs"):
+            DINOLoss(output_dim=8)([out], [out], teacher_temp=0.04)
+
+    def test_two_teacher_views_against_one_student_view_is_fine(self):
+        """The guard must not reject legitimately asymmetric view counts."""
+        loss = DINOLoss(output_dim=8)(
+            [torch.randn(4, 8), torch.randn(4, 8)], [torch.randn(4, 8)], teacher_temp=0.04
+        )
+        assert torch.isfinite(loss)
+
     def test_rejects_unknown_center_mode(self):
         with pytest.raises(ValueError, match="Unknown mode"):
             DINOLoss(output_dim=8, center_mode="median")

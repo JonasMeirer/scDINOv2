@@ -153,6 +153,25 @@ class TestLoadTiff:
         tifffile.imwrite(path, np.zeros((8, 8, 5), dtype=np.float32))
         assert dm.load_tiff(str(path)).shape[0] == 5
 
+    def test_preserves_spatial_orientation(self, tmp_path):
+        """(H, W, C) -> (C, H, W) must not transpose the image.
+
+        Regression test: `ndarray.T` reverses *every* axis and yields
+        (C, W, H), silently swapping height and width. A non-square,
+        non-symmetric crop is the only way to see it.
+        """
+        import tifffile
+
+        dm = make_datamodule(tmp_path, norm_type="identity")
+        hwc = np.arange(4 * 6 * 5, dtype=np.float32).reshape(4, 6, 5)  # H=4, W=6, C=5
+        path = tmp_path / "crop.tiff"
+        tifffile.imwrite(path, hwc)
+
+        out = dm.load_tiff(str(path)).numpy()
+        assert out.shape == (5, 4, 6), "expected (C, H, W)"
+        for channel in range(5):
+            np.testing.assert_allclose(out[channel], hwc[:, :, channel])
+
     def test_rejects_an_unknown_norm_type(self, tmp_path):
         import tifffile
 

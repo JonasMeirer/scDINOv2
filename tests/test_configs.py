@@ -63,6 +63,15 @@ class TestRootConfigs:
         assert cfg.mode == "inference"
         assert cfg.eval is not None
 
+    def test_training_is_not_truncated_by_default(self):
+        """max_train_batches is a debugging knob.
+
+        Shipping a finite default silently capped every epoch of the
+        documented `python -m src.scdino.train.run` run at that many batches.
+        """
+        cfg = compose_config("train", [])
+        assert cfg.max_train_batches is None
+
     def test_inference_ships_no_machine_specific_checkpoint_path(self):
         """local_model_path must not point at a developer's filesystem."""
         cfg = compose_config("inference", [])

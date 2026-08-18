@@ -60,6 +60,34 @@ class TestDINOTransform:
         # (0.5 - 0.5) / 0.1 == 0 everywhere, modulo the stochastic augmentations.
         assert torch.isfinite(views[0]).all()
 
+    def test_do_center_crop_is_forwarded_to_every_view(self, transform_cfg):
+        """The `do_centercrop` ablation config sets this flag.
+
+        Regression test: it used to be read from the config and then dropped
+        on the way into DINOViewTransform, so the ablation silently
+        reproduced the baseline run.
+        """
+        import torchvision.transforms as T
+
+        transform_cfg.do_center_crop = True
+        views = DINOTransform(transform_cfg)
+        for view_transform in views.transforms:
+            first_op = view_transform.transform.transforms[0]
+            assert isinstance(first_op, T.CenterCrop)
+
+    def test_random_resized_crop_is_the_default(self, transform_cfg):
+        import torchvision.transforms as T
+
+        views = DINOTransform(transform_cfg)
+        first_op = views.transforms[0].transform.transforms[0]
+        assert isinstance(first_op, T.RandomResizedCrop)
+
+    def test_center_cropped_views_keep_the_configured_sizes(self, transform_cfg):
+        transform_cfg.do_center_crop = True
+        views = DINOTransform(transform_cfg)(torch.rand(5, 16, 16))
+        assert all(v.shape == (5, 16, 16) for v in views[:2])
+        assert all(v.shape == (5, 8, 8) for v in views[2:])
+
     def test_views_differ_from_one_another(self, transform_cfg):
         torch.manual_seed(0)
         views = DINOTransform(transform_cfg)(torch.rand(5, 16, 16))

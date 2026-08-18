@@ -72,6 +72,43 @@ class TestKnnClassifier:
         torch.testing.assert_close(probs.sum(dim=1), torch.ones(20), rtol=1e-5, atol=1e-6)
         assert (preds == probs.argmax(dim=1)).all()
 
+    def test_handles_a_final_train_chunk_smaller_than_k(self):
+        """The last chunk can hold fewer than k rows; k is clamped per chunk.
+
+        Regression test for a crash whenever
+        `len(train_features) % train_chunk_size < k`.
+        """
+        train_x, train_y = torch.randn(105, 8), torch.randint(0, 3, (105,))
+        probs, _ = knn_classifier(
+            train_x, train_y, torch.randn(4, 8), k=20, T=0.07,
+            num_classes=3, train_chunk_size=100,
+        )
+        assert probs.shape == (4, 3)
+
+    def test_ragged_chunking_still_matches_the_reference(self):
+        """Clamping k per chunk must not change the answer."""
+        torch.manual_seed(0)
+        train_x, train_y = torch.randn(105, 8), torch.randint(0, 3, (105,))
+        test_x = torch.randn(6, 8)
+        expected = brute_force_knn(train_x, train_y, test_x, k=20, T=0.07, num_classes=3)
+        probs, _ = knn_classifier(
+            train_x, train_y, test_x, k=20, T=0.07,
+            num_classes=3, train_chunk_size=100,
+        )
+        torch.testing.assert_close(probs, expected, rtol=1e-4, atol=1e-5)
+
+    def test_k_larger_than_the_reference_set_is_clamped(self):
+        train_x, train_y = torch.randn(5, 4), torch.randint(0, 2, (5,))
+        probs, _ = knn_classifier(train_x, train_y, torch.randn(3, 4), k=50, T=0.07, num_classes=2)
+        assert probs.shape == (3, 2)
+
+    def test_rejects_an_empty_reference_set(self):
+        with pytest.raises(ValueError, match="at least one reference sample"):
+            knn_classifier(
+                torch.zeros(0, 4), torch.zeros(0, dtype=torch.long),
+                torch.randn(2, 4), k=5, T=0.07, num_classes=2,
+            )
+
     def test_infers_num_classes_from_labels_when_not_given(self):
         train_x = torch.randn(50, 4)
         train_y = torch.randint(0, 6, (50,))
@@ -112,6 +149,16 @@ class TestComputeKnnAccuracy:
         res = compute_knn_accuracy(torch.rand(10, 3), torch.randint(0, 3, (10,)), topk=(1, 5))
         assert "top5" not in res
         assert "top1" in res
+
+    def test_drops_k_equal_to_the_number_of_classes(self):
+        """top-5 on a 5-class problem is trivially 100% and must be dropped."""
+        res = compute_knn_accuracy(torch.rand(50, 5), torch.randint(0, 5, (50,)), topk=(1, 5))
+        assert "top5" not in res
+        assert "top1" in res
+
+    def test_keeps_k_strictly_below_the_number_of_classes(self):
+        res = compute_knn_accuracy(torch.rand(50, 6), torch.randint(0, 6, (50,)), topk=(1, 5))
+        assert "top5" in res
 
     def test_always_reports_something(self):
         """Even if every requested k is dropped, top1 is reported."""
