@@ -112,18 +112,10 @@ uv sync
 uv run pytest
 ```
 
-The suite is CPU-only and runs in a few seconds, so it is usable as a
-pre-commit gate. It covers the kNN classifier (against a brute-force
+The suite is CPU-only and covers the kNN classifier (against a brute-force
 reference), the SSL objectives, the augmentation pipeline, dataset
 normalization, channel adaptation, the HuggingFace export round trip, and the
 composition of every shipped Hydra config.
-
-`tests/test_known_bugs.py` is an executable list of known, unfixed defects.
-Each test asserts the behaviour we *want* and is marked
-`xfail(strict=True)`, so CI stays green while a bug is open and turns **red**
-the moment it is fixed — at which point the marker should be removed and the
-test promoted. Please do not add `xfail` markers there for anything but a
-genuinely open defect.
 
 CI (`.github/workflows/ci.yml`) runs the test suite against the committed
 `uv.lock`, and separately verifies that the licence files and the vendored-code
