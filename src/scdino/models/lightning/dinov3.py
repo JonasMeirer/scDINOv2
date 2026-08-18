@@ -419,29 +419,24 @@ class DINOv3(L.LightningModule):
             )
             results = compute_knn_accuracy(probs, val_labels, topk=(1, 5))
 
-            self.log(
-                "val/knn_top1",
-                results["top1"],
-                prog_bar=True,
-                logger=True,
-                sync_dist=True,
-                on_epoch=True,
-                on_step=False,
-            )
-            self.log(
-                "val/knn_top5",
-                results["top5"],
-                prog_bar=True,
-                logger=True,
-                sync_dist=True,
-                on_epoch=True,
-                on_step=False,
-            )
+            # Log whichever top-k values were computed for this dataset
+            # (top-5 is not for datasets with < 5 classes).
+            for key, value in results.items():
+                self.log(
+                    f"val/knn_{key}",
+                    value,
+                    prog_bar=True,
+                    logger=True,
+                    sync_dist=True,
+                    on_epoch=True,
+                    on_step=False,
+                )
 
-            print(
-                f"Epoch {self.current_epoch}: kNN Top1={results['top1']:.2f}%, Top5={results['top5']:.2f}%"
+            summary = ", ".join(
+                f"{key.capitalize()}={value:.2f}%" for key, value in results.items()
             )
-
+            print(f"Epoch {self.current_epoch}: kNN {summary}")
+            
         except Exception as e:
             print(f"kNN evaluation failed: {e}")
             import traceback

@@ -96,6 +96,12 @@ def compute_knn_accuracy(
     Returns:
         dict: accuracy results for each k
     """
+    num_classes = probs.size(1)
+    # Drop any k that exceeds the number of classes: top-5 is undefined for a
+    # 2-class problem (and meaningless — top-2 would be trivially 100%).
+    topk = tuple(k for k in topk if k <= num_classes)
+    if not topk:
+        topk = (1,)
     maxk = max(topk)
     batch_size = targets.size(0)
 
@@ -134,4 +140,5 @@ if __name__ == "__main__":
     results = compute_knn_accuracy(probs, test_y, topk=(1, 5))
 
     print(f"kNN top1 accuracy: {results['top1']:.2f}%")
-    print(f"kNN top5 accuracy: {results['top5']:.2f}%")
+    if "top5" in results:
+        print(f"kNN top5 accuracy: {results['top5']:.2f}%")

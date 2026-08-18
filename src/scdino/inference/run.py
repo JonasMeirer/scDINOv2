@@ -80,7 +80,8 @@ def run_inference(cfg: DictConfig):
     )
     results = compute_knn_accuracy(probs, test_labels, topk=(1, 5))
     print(f"kNN top1 accuracy: {results['top1']:.2f}%")
-    print(f"kNN top5 accuracy: {results['top5']:.2f}%")
+    if "top5" in results:
+        print(f"kNN top5 accuracy: {results['top5']:.2f}%") # only if available
 
     test_features_np = test_features.cpu().numpy()
     test_labels_np = test_labels.cpu().numpy()
@@ -171,7 +172,7 @@ def run_inference(cfg: DictConfig):
 
     metrics_out = {
         "val_knn_top1": format(results['top1'], ".4f"),
-        "val_knn_top5": format(results['top5'], ".4f"),
+        #"val_knn_top5": format(results['top5'], ".4f"),
         "val_silhouette": format(results['silhouette'], ".4f"),
         "val_silhouette_umap": format(results['silhouette_umap'], ".4f"),
         "val_purity@1": format(results['purity@1'], ".4f"),
@@ -186,6 +187,9 @@ def run_inference(cfg: DictConfig):
         "val_purity_umap@100_classes": results['val_purity_umap@100_classes'],
         "inference_throughput_samples_per_min": format(throughput_samples_per_min, ".2f"),
     }
+    if "top5" in results: # only if available
+        metrics_out["val_knn_top5"] = format(results['top5'], ".4f")
+    
     if "hdbscan_n_clusters" in results:
         metrics_out["val_hdbscan_n_clusters"] = results["hdbscan_n_clusters"]
         metrics_out["val_hdbscan_silhouette"] = format(results["hdbscan_silhouette"], ".4f")

@@ -8,10 +8,7 @@ from timm.models.vision_transformer import VisionTransformer
 from timm.models.resnet import ResNet, BasicBlock
 
 from src.scdino.models.backbones.dinov2 import MaskedVisionTransformerTIMM
-from src.scdino.models.backbones.dinov2_StrucPerc import (
-    MaskedPerceiverStrucPerc,
-    PerceiverStrucPerc,
-)
+
 from src.scdino.models.backbones.dinov3 import (
     DinoVisionTransformer,
     MaskedDinoVisionTransformer,
