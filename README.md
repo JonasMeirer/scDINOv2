@@ -60,12 +60,6 @@ python -m src.scdino.benchmark.collect outputs/benchmark/scaling/
 
 Produces `benchmark_summary.csv` (per-run) and `benchmark_summary_agg.csv` (mean/std across seeds).
 
-### Parallel and SLURM execution
-
-```bash
-python -m src.scdino.train.run --multirun hydra/launcher=joblib +experiment=scaling ...
-python -m src.scdino.train.run --multirun hydra/launcher=submitit_slurm +experiment=scaling ...
-```
 
 ## Classical baseline
 

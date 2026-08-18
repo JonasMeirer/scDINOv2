@@ -13,6 +13,7 @@ import zarr
 from src.scdino.models.huggingface import ScDINOModel
 from src.scdino.utils.conv_mod import conv_mod
 from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
+from src.scdino.inference.utils import sync_with_training_config
 
 
 def write_feature_store(
@@ -63,6 +64,8 @@ def write_feature_store(
 @hydra.main(config_path="../../../configs", config_name="inference.yaml")
 def run_embed(cfg: DictConfig):
     L.seed_everything(cfg.seed, workers=True)
+    
+    sync_with_training_config(cfg)
 
     # Load the dataset
     datamodule = hydra.utils.instantiate(cfg.datamodule)

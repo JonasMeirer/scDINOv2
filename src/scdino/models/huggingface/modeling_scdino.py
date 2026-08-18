@@ -55,42 +55,6 @@ class ScDINOModel(PreTrainedModel):
                 pos_embed_initialization="skip",
             )
 
-        elif config.model_variant == "dinov2_StrucPerc":
-            perceiver = PerceiverStrucPerc(
-                in_chans=config.in_chans,
-                img_size=config.img_size,
-                patch_size=config.patch_size,
-                embed_dim=config.embed_dim,
-                num_heads=config.num_heads,
-                latent_size=(config.latent_h, config.latent_w),
-                num_self_blocks=config.num_self_blocks,
-                num_cross_blocks=config.num_cross_blocks,
-                depth_outer=config.depth_outer,
-                # ``reg_tokens`` is the canonical HF config name; the
-                # perceiver constructor uses the dinov3-style synonym.
-                n_storage_tokens=config.reg_tokens,
-                ffn_ratio=config.mlp_ratio,
-                qkv_bias=config.qkv_bias,
-                proj_bias=config.proj_bias,
-                ffn_bias=config.ffn_bias,
-                mask_k_bias=config.mask_k_bias,
-                drop_rate=0.0,
-                attn_drop_rate=0.0,
-                drop_path_rate=0.0,
-                layerscale_init=config.init_values,
-                norm_layer=config.norm_layer,
-                ffn_layer=config.ffn_layer,
-                rope_base=config.rope_base,
-                rope_min_period=config.rope_min_period,
-                rope_max_period=config.rope_max_period,
-                rope_normalize_coords=config.rope_normalize_coords,
-                rope_shift_coords=config.rope_shift_coords,
-                rope_jitter_coords=config.rope_jitter_coords,
-                rope_rescale_coords=config.rope_rescale_coords,
-                rope_dtype=config.rope_dtype,
-            )
-            self.backbone = MaskedPerceiverStrucPerc(perceiver=perceiver)
-
         elif config.model_variant == "dinov3":
             vit = DinoVisionTransformer(
                 in_chans=config.in_chans,
