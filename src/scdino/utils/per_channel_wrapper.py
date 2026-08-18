@@ -18,7 +18,9 @@ class PerChannelWrapper(nn.Module):
     - ``"mean"``: averaged, giving base_embedding_dim.
     """
 
-    def __init__(self, model: nn.Module, extract_fn: Callable, num_channels: int, flavor="concat"):
+    def __init__(
+        self, model: nn.Module, extract_fn: Callable, num_channels: int, flavor="concat"
+    ):
         super().__init__()
         if flavor not in FLAVORS:
             raise ValueError(f"Unknown flavor {flavor!r}, expected one of {FLAVORS}")
@@ -36,10 +38,12 @@ class PerChannelWrapper(nn.Module):
             emb = self.extract_fn(self.model(rgb))  # (B, D)
             parts.append(emb)
         if self.flavor == "concat":
-            return torch.cat(parts, dim=1) # (B, C*D)
+            return torch.cat(parts, dim=1)  # (B, C*D)
         elif self.flavor == "mean":
             # list to tensor
-            parts = torch.stack(parts) # (C, B, D)
-            return torch.mean(parts, dim=0) # (B, D)
+            parts = torch.stack(parts)  # (C, B, D)
+            return torch.mean(parts, dim=0)  # (B, D)
         else:  # unreachable: validated in __init__
-            raise ValueError(f"Unknown flavor {self.flavor!r}, expected one of {FLAVORS}")
+            raise ValueError(
+                f"Unknown flavor {self.flavor!r}, expected one of {FLAVORS}"
+            )

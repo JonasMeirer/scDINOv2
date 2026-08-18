@@ -8,7 +8,9 @@ file can be re-synced from upstream without merge pain.
 from torch import nn
 
 
-def freeze_last_layer_gradients(head: nn.Module, current_epoch: int, freeze_epochs: int = 1) -> None:
+def freeze_last_layer_gradients(
+    head: nn.Module, current_epoch: int, freeze_epochs: int = 1
+) -> None:
     """Drop gradients for a projection head's ``last_layer`` during warmup.
 
     DINO freezes the output layer of the projection head for the first epoch:

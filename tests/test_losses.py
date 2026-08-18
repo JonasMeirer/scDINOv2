@@ -59,7 +59,9 @@ class TestDINOLoss:
         disagreeing[:, 1] = 10.0
 
         low = loss_fn([teacher, teacher], [agreeing, agreeing], teacher_temp=0.04)
-        high = loss_fn([teacher, teacher], [disagreeing, disagreeing], teacher_temp=0.04)
+        high = loss_fn(
+            [teacher, teacher], [disagreeing, disagreeing], teacher_temp=0.04
+        )
         assert low < high
 
     def test_centre_tracks_the_teacher_output(self):
@@ -83,7 +85,9 @@ class TestDINOLoss:
     def test_two_teacher_views_against_one_student_view_is_fine(self):
         """The guard must not reject legitimately asymmetric view counts."""
         loss = DINOLoss(output_dim=8)(
-            [torch.randn(4, 8), torch.randn(4, 8)], [torch.randn(4, 8)], teacher_temp=0.04
+            [torch.randn(4, 8), torch.randn(4, 8)],
+            [torch.randn(4, 8)],
+            teacher_temp=0.04,
         )
         assert torch.isfinite(loss)
 
@@ -134,9 +138,9 @@ class TestIBOTPatchLoss:
             teacher[:, 0] = 10.0
             loss = loss_fn(teacher, teacher.clone(), mask=mask, teacher_temp=0.04)
             # Per-image normalisation means the value is independent of n_rows.
-            assert loss.item() == pytest.approx(loss_fn(
-                teacher, teacher.clone(), mask=mask, teacher_temp=0.04
-            ).item())
+            assert loss.item() == pytest.approx(
+                loss_fn(teacher, teacher.clone(), mask=mask, teacher_temp=0.04).item()
+            )
 
 
 class TestKoLeoLoss:
@@ -167,8 +171,10 @@ class TestRandomBlockMask:
 
     def test_per_image_mask_ratio_stays_within_bounds(self):
         mask = random_block_mask(
-            size=(32, 14, 14), batch_mask_ratio=1.0,
-            min_image_mask_ratio=0.1, max_image_mask_ratio=0.5,
+            size=(32, 14, 14),
+            batch_mask_ratio=1.0,
+            min_image_mask_ratio=0.1,
+            max_image_mask_ratio=0.5,
         )
         ratios = mask.flatten(1).float().mean(dim=1)
         # The generator can undershoot but must never exceed the upper bound by
@@ -177,7 +183,9 @@ class TestRandomBlockMask:
 
     def test_rejects_inverted_bounds(self):
         with pytest.raises(ValueError):
-            random_block_mask(size=(4, 8, 8), min_image_mask_ratio=0.5, max_image_mask_ratio=0.1)
+            random_block_mask(
+                size=(4, 8, 8), min_image_mask_ratio=0.5, max_image_mask_ratio=0.1
+            )
 
 
 class TestUpdateMomentum:

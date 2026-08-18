@@ -28,19 +28,36 @@ def tiny_dinov2(tiny_vit_backbone_config, tiny_head_config):
         {
             "max_epochs": 1,
             "optimizer": {"lr": 1e-3},
-            "teacher_temp": {"warmup_steps": 10, "start_value": 0.04, "end_value": 0.07},
+            "teacher_temp": {
+                "warmup_steps": 10,
+                "start_value": 0.04,
+                "end_value": 0.07,
+            },
             "weight_decay": {"start_value": 0.001, "end_value": 0.01},
             "momentum": {"start_value": 0.992, "end_value": 1.0},
             "losses": {
-                "dino": {"output_dim": 32, "student_temp": 0.1,
-                         "center_momentum": 0.9, "center_mode": "mean", "weight": 1.0},
-                "ibot": {"output_dim": 32, "student_temp": 0.1,
-                         "center_momentum": 0.9, "center_mode": "mean", "weight": 1.0},
+                "dino": {
+                    "output_dim": 32,
+                    "student_temp": 0.1,
+                    "center_momentum": 0.9,
+                    "center_mode": "mean",
+                    "weight": 1.0,
+                },
+                "ibot": {
+                    "output_dim": 32,
+                    "student_temp": 0.1,
+                    "center_momentum": 0.9,
+                    "center_mode": "mean",
+                    "weight": 1.0,
+                },
                 "koleo": {"p": 2, "eps": 1e-8, "weight": 0.1},
             },
             "knn_eval": {
-                "enable_knn_eval": False, "knn_k": 5, "knn_temperature": 0.07,
-                "knn_max_train_batches": 1, "knn_val_chunk_size": 8,
+                "enable_knn_eval": False,
+                "knn_k": 5,
+                "knn_temperature": 0.07,
+                "knn_max_train_batches": 1,
+                "knn_val_chunk_size": 8,
                 "knn_train_chunk_size": 8,
             },
         }
@@ -100,7 +117,9 @@ class TestSavePretrainedRoundTrip:
         assert (out / "config.json").is_file()
         assert any(out.glob("*.safetensors")) or (out / "pytorch_model.bin").is_file()
 
-    def test_exported_weights_match_the_teacher_not_the_student(self, tiny_dinov2, tmp_path):
+    def test_exported_weights_match_the_teacher_not_the_student(
+        self, tiny_dinov2, tmp_path
+    ):
         """Only the EMA teacher is meant to be exported."""
         with torch.no_grad():
             for param in tiny_dinov2.student_backbone.parameters():

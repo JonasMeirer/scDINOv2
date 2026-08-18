@@ -23,7 +23,10 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         self.test_dir = paths.get("test_dir", None)
         self.predict_dir = paths.get("predict_dir", None)
 
-        for key, value in (("train_dir", self.data_dir_train), ("val_dir", self.data_dir_val)):
+        for key, value in (
+            ("train_dir", self.data_dir_train),
+            ("val_dir", self.data_dir_val),
+        ):
             if not value:
                 raise ValueError(
                     f"datamodule.paths.{key} is not set. The shipped configs resolve it "
@@ -42,12 +45,16 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
 
         # TRANSFORMS
         self.norm_type = loader.get("norm_type", "robust")
-        self.channels = loader.get("channels", None) #rp added: to change input channels for the model (e.g. 5 channels for chronotype)
+        self.channels = loader.get(
+            "channels", None
+        )  # rp added: to change input channels for the model (e.g. 5 channels for chronotype)
         self.max_vals_clip = loader.get("max_vals_clip", None)
         self.mean = loader.norm_dict.get(self.norm_type).get("mean")
         self.std = loader.norm_dict.get(self.norm_type).get("std")
 
-        if self.channels is not None: # rp addded: normalisation only with channels of interest 
+        if (
+            self.channels is not None
+        ):  # rp addded: normalisation only with channels of interest
             idx = list(self.channels)
             self.mean = [self.mean[i] for i in idx]
             self.std = [self.std[i] for i in idx]
@@ -75,9 +82,8 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
                 target_transform=None,
             )
 
-            if (
-                self.max_train_samples is not None
-                and self.max_train_samples < len(self.train_dataset)
+            if self.max_train_samples is not None and self.max_train_samples < len(
+                self.train_dataset
             ):
                 indices = torch.randperm(len(self.train_dataset))[
                     : self.max_train_samples
@@ -231,8 +237,10 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
     def load_tiff(self, path):
         img = tifffile.imread(path)  # (50, 50, 5)
 
-        if self.channels is not None: # rp added: to change input channels for the model (e.g. 5 channels for chronotype)
-            img = img[..., list(self.channels)]     # select specific channels
+        if (
+            self.channels is not None
+        ):  # rp added: to change input channels for the model (e.g. 5 channels for chronotype)
+            img = img[..., list(self.channels)]  # select specific channels
         if self.norm_type == "robust":
             img = normalize_numpy_robust(img)
         elif self.norm_type == "robust_2":

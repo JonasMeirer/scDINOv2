@@ -445,7 +445,7 @@ class DINOv3(L.LightningModule):
                 f"{key.capitalize()}={value:.2f}%" for key, value in results.items()
             )
             print(f"Epoch {self.current_epoch}: kNN {summary}")
-            
+
         except Exception as e:
             print(f"kNN evaluation failed: {e}")
             import traceback
@@ -475,9 +475,7 @@ class DINOv3(L.LightningModule):
                     on_epoch=True,
                     on_step=False,
                 )
-                print(
-                    f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}"
-                )
+                print(f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}")
         except Exception as e:
             print(f"Silhouette score computation failed: {e}")
             import traceback

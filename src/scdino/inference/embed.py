@@ -1,4 +1,3 @@
-from re import T
 import torch
 import hydra
 from tqdm import tqdm
@@ -35,7 +34,7 @@ def write_feature_store(
 
     features_shuffled = all_features[perm]
     paths_shuffled = all_paths[perm]
-    
+
     # Create a 2D Zarr array
     z = zarr.create_array(
         store=f"{out_dir}/features.zarr",
@@ -43,20 +42,20 @@ def write_feature_store(
         chunks=(chunk_rows, D),
         dtype="float32",
         compressors=zarr.codecs.BloscCodec(
-            cname="zstd",
-            clevel=3,
-            shuffle=zarr.codecs.BloscShuffle.shuffle
-        )
+            cname="zstd", clevel=3, shuffle=zarr.codecs.BloscShuffle.shuffle
+        ),
     )
-    
+
     z[:, :] = features_shuffled
 
     # Parquet for paths
-    paths_df = pd.DataFrame({
-        "row_idx": np.arange(N),
-        "path": paths_shuffled,
-        "original_idx": perm,
-    })
+    paths_df = pd.DataFrame(
+        {
+            "row_idx": np.arange(N),
+            "path": paths_shuffled,
+            "original_idx": perm,
+        }
+    )
 
     paths_df.to_parquet(f"{out_dir}/paths.parquet", index=False)
 
@@ -64,14 +63,18 @@ def write_feature_store(
 @hydra.main(config_path="../../../configs", config_name="inference.yaml")
 def run_embed(cfg: DictConfig):
     L.seed_everything(cfg.seed, workers=True)
-    
+
     sync_with_training_config(cfg)
 
     # Load the dataset
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     datamodule.setup("predict")
-    train_loader = datamodule.train_dataloader(shuffle=False) # no shuffling to access sample paths
-    val_loader = datamodule.val_dataloader(shuffle=False) # no shuffling to access sample path
+    train_loader = datamodule.train_dataloader(
+        shuffle=False
+    )  # no shuffling to access sample paths
+    val_loader = datamodule.val_dataloader(
+        shuffle=False
+    )  # no shuffling to access sample path
 
     # Load the model
     device = torch.device(
@@ -94,10 +97,14 @@ def run_embed(cfg: DictConfig):
         if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, extract_embeddings, num_channels)
         elif flavor == "DINO4CELL_MEAN":
-            model = PerChannelWrapper(model, extract_embeddings, num_channels, flavor="mean")
+            model = PerChannelWrapper(
+                model, extract_embeddings, num_channels, flavor="mean"
+            )
         else:
             model.embeddings.patch_embeddings = conv_mod(
-                model.embeddings.patch_embeddings, num_channels, flavor=flavor,
+                model.embeddings.patch_embeddings,
+                num_channels,
+                flavor=flavor,
             )
 
     elif model_id.startswith("facebook/dinov2"):
@@ -111,10 +118,14 @@ def run_embed(cfg: DictConfig):
         if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, extract_embeddings, num_channels)
         elif flavor == "DINO4CELL_MEAN":
-            model = PerChannelWrapper(model, extract_embeddings, num_channels, flavor="mean")
+            model = PerChannelWrapper(
+                model, extract_embeddings, num_channels, flavor="mean"
+            )
         else:
             model.embeddings.patch_embeddings.projection = conv_mod(
-                model.embeddings.patch_embeddings.projection, num_channels, flavor=flavor,
+                model.embeddings.patch_embeddings.projection,
+                num_channels,
+                flavor=flavor,
             )
             model.embeddings.patch_embeddings.num_channels = num_channels
 
@@ -124,44 +135,45 @@ def run_embed(cfg: DictConfig):
 
         def extract_embeddings(model_output):
             return model_output.pooler_output
-            
 
     if isinstance(model, PerChannelWrapper):
+
         def embed(images):
             return model(images)
     else:
+
         def embed(images):
             return extract_embeddings(model(images))
 
     train_features = []
     test_features = []
     all_paths = []
-    
-    i=0
+
+    i = 0
     for images, _ in tqdm(train_loader):
         with torch.no_grad():
             train_features.append(embed(images.to(device)).detach().cpu())
-            
-        samples = train_loader.dataset.samples[i:i+images.shape[0]]
+
+        samples = train_loader.dataset.samples[i : i + images.shape[0]]
         paths = [s[0] for s in samples]
         all_paths.extend(paths)
         i += images.shape[0]
 
-    # i=0
-    # for images, _ in tqdm(val_loader):
-    #     with torch.no_grad():
-    #         test_features.append(embed(images.to(device)).detach().cpu())
-            
-    #     samples = val_loader.dataset.samples[i:i+images.shape[0]]
-    #     paths = [s[0] for s in samples]
-    #     all_paths.extend(paths)
-    #     i += images.shape[0]
+    i = 0
+    for images, _ in tqdm(val_loader):
+        with torch.no_grad():
+            test_features.append(embed(images.to(device)).detach().cpu())
+
+        samples = val_loader.dataset.samples[i : i + images.shape[0]]
+        paths = [s[0] for s in samples]
+        all_paths.extend(paths)
+        i += images.shape[0]
 
     train_features = torch.cat(train_features, dim=0)
-    #test_features = torch.cat(test_features, dim=0)
-    
-    all_features = train_features # torch.cat([train_features, test_features], dim=0) # (N, D)
-    
+    test_features = torch.cat(test_features, dim=0)
+
+    all_features = torch.cat([train_features, test_features], dim=0)  # (N, D)
+
     write_feature_store(
         all_features=all_features,
         all_paths=all_paths,
@@ -173,8 +185,8 @@ def run_embed(cfg: DictConfig):
 
 if __name__ == "__main__":
     run_embed()
-    
-    
+
+
 # Downstream usage:
 
 

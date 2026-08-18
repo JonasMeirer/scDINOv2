@@ -521,8 +521,7 @@ class KoLeoLoss(Module):
 
 #         statistic = (err @ weights) * x.size(0)
 
-#         return statistic.mean()   
-
+#         return statistic.mean()
 
 
 def random_block_mask(

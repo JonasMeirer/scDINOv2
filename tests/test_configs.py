@@ -92,7 +92,9 @@ class TestModelConfigs:
         cfg = compose_config("train", [f"model={model}"])
         assert cfg.datamodule.transforms is not None
 
-    @pytest.mark.parametrize("model", [m for m in MODELS if not m.startswith("pretrained/")])
+    @pytest.mark.parametrize(
+        "model", [m for m in MODELS if not m.startswith("pretrained/")]
+    )
     def test_trainable_models_declare_a_lightning_target(self, model):
         cfg = compose_config("train", [f"model={model}"])
         assert "_target_" in cfg.model, f"{model} has no _target_ to instantiate"
@@ -132,7 +134,9 @@ class TestDatamoduleConfigs:
     @pytest.mark.parametrize("datamodule", DATAMODULES)
     def test_composes(self, datamodule):
         if datamodule.startswith("transforms/"):
-            pytest.skip("transform fragments are composed via the datamodule, not directly")
+            pytest.skip(
+                "transform fragments are composed via the datamodule, not directly"
+            )
         cfg = compose_config("train", [f"datamodule={datamodule}"])
         assert cfg.datamodule.paths.train_dir
         assert cfg.datamodule.paths.val_dir

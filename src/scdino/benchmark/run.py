@@ -29,10 +29,10 @@ def find_hf_models(root: Path) -> list[Path]:
 
 def run_command(cmd: list[str], label: str) -> bool:
     """Run a command, print output, return True on success."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {label}")
     print(f"  {' '.join(cmd)}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
     result = subprocess.run(cmd)
     if result.returncode != 0:
         print(f"[WARN] {label} exited with code {result.returncode}")
@@ -115,9 +115,9 @@ def main() -> None:
         (succeeded if ok else failed).append(model_dir.name)
 
     # --- Summary --------------------------------------------------------------
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  Benchmark Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Models found:      {len(model_dirs)}")
     print(f"  Inference success:  {len(succeeded)}")
     print(f"  Inference failed:   {len(failed)}")

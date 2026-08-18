@@ -36,8 +36,14 @@ def run_inference(cfg: DictConfig):
     train_loader = datamodule.train_dataloader()
     val_loader = datamodule.val_dataloader(shuffle=True)
 
-    max_train_batches = cfg.max_train_batches if cfg.max_train_batches is not None else len(train_loader)
-    max_val_batches = cfg.max_val_batches if cfg.max_val_batches is not None else len(val_loader)
+    max_train_batches = (
+        cfg.max_train_batches
+        if cfg.max_train_batches is not None
+        else len(train_loader)
+    )
+    max_val_batches = (
+        cfg.max_val_batches if cfg.max_val_batches is not None else len(val_loader)
+    )
     n_cells_per_class = cfg.get("n_cells_per_class")
     assert n_cells_per_class > 0, "n_cells_per_class must be greater than 0"
 
@@ -55,39 +61,55 @@ def run_inference(cfg: DictConfig):
     ext = cfg.eval.get("plot_format", "png").lower()
 
     train_features, train_labels, train_n, train_t = extract_features(
-        train_loader, embed, device, max_train_batches,
-        attn_fn=attn_fn, attn_path=hydra_out / f"attn_heatmap.{ext}",
+        train_loader,
+        embed,
+        device,
+        max_train_batches,
+        attn_fn=attn_fn,
+        attn_path=hydra_out / f"attn_heatmap.{ext}",
     )
     test_features, test_labels, test_n, test_t = extract_features(
-        val_loader, embed, device, max_val_batches,
+        val_loader,
+        embed,
+        device,
+        max_val_batches,
     )
     infer_samples = train_n + test_n
     infer_seconds = train_t + test_t
     throughput_samples_per_min = (
         (infer_samples / infer_seconds) * 60.0 if infer_seconds > 0 else float("nan")
     )
-    print(f"Inference throughput: {throughput_samples_per_min:.2f} samples/min "
-          f"({infer_samples} samples in {infer_seconds:.2f}s)")
+    print(
+        f"Inference throughput: {throughput_samples_per_min:.2f} samples/min "
+        f"({infer_samples} samples in {infer_seconds:.2f}s)"
+    )
 
     num_classes = len(torch.unique(train_labels))
     print(f"Number of classes: {num_classes}")
 
     probs, _ = knn_classifier(
-        train_features, train_labels, test_features,
-        k=cfg.eval.k, T=cfg.eval.T, num_classes=num_classes,
+        train_features,
+        train_labels,
+        test_features,
+        k=cfg.eval.k,
+        T=cfg.eval.T,
+        num_classes=num_classes,
         query_batch_size=cfg.eval.query_batch_size,
         train_chunk_size=cfg.eval.train_chunk_size,
     )
     results = compute_knn_accuracy(probs, test_labels, topk=(1, 5))
     print(f"kNN top1 accuracy: {results['top1']:.2f}%")
     if "top5" in results:
-        print(f"kNN top5 accuracy: {results['top5']:.2f}%") # only if available
+        print(f"kNN top5 accuracy: {results['top5']:.2f}%")  # only if available
 
     test_features_np = test_features.cpu().numpy()
     test_labels_np = test_labels.cpu().numpy()
     sample_size = min(10_000, len(test_features_np))
     results["silhouette"] = silhouette_score(
-        test_features_np, test_labels_np, sample_size=sample_size, random_state=42,
+        test_features_np,
+        test_labels_np,
+        sample_size=sample_size,
+        random_state=42,
     )
     print(f"Silhouette score: {results['silhouette']:.4f}")
 
@@ -107,14 +129,18 @@ def run_inference(cfg: DictConfig):
     )
     umap_features = reducer.fit_transform(test_features_np_sampled)
     results["silhouette_umap"] = silhouette_score(
-        umap_features, test_labels_np_sampled, random_state=42,
+        umap_features,
+        test_labels_np_sampled,
+        random_state=42,
     )
     print(f"Silhouette score (UMAP): {results['silhouette_umap']:.4f}")
 
     y = test_labels_np_sampled
-    y_class = pd.Series(y).map(
-        {val: key for key, val in datamodule.val_dataset.class_to_idx.items()}
-    ).values
+    y_class = (
+        pd.Series(y)
+        .map({val: key for key, val in datamodule.val_dataset.class_to_idx.items()})
+        .values
+    )
 
     ks = (1, 10, 100, 1000)
     same_label, purities = compute_purity(test_features_np_sampled, y, ks=ks)
@@ -122,15 +148,21 @@ def run_inference(cfg: DictConfig):
     for k in ks:
         results[f"purity@{k}"] = purities[k]
         results[f"purity_umap@{k}"] = purities_umap[k]
-        print(f"Purity@{k}: {purities[k]:.3f}  |  Purity_umap@{k}: {purities_umap[k]:.3f}")
+        print(
+            f"Purity@{k}: {purities[k]:.3f}  |  Purity_umap@{k}: {purities_umap[k]:.3f}"
+        )
 
     print("Purity@100 per class:")
     per_class = purity_per_class(same_label, y_class, k=100)
     per_class_umap = purity_per_class(same_label_umap, y_class, k=100)
-    results["val_purity@100_classes"] = {f"class_{cls}": format(v, ".4f") for cls, v in per_class.items()}
+    results["val_purity@100_classes"] = {
+        f"class_{cls}": format(v, ".4f") for cls, v in per_class.items()
+    }
     for cls, v in per_class.items():
         print("\t", cls, format(v, ".4f"))
-    results["val_purity_umap@100_classes"] = {f"class_{cls}": format(v, ".4f") for cls, v in per_class_umap.items()}
+    results["val_purity_umap@100_classes"] = {
+        f"class_{cls}": format(v, ".4f") for cls, v in per_class_umap.items()
+    }
     for cls, v in per_class_umap.items():
         print("\t", cls, format(v, ".4f"))
 
@@ -154,7 +186,10 @@ def run_inference(cfg: DictConfig):
         class_names = getattr(datamodule.val_dataset, "classes", None)
         cm_path = hydra_out / f"confusion_matrix.{ext}"
         plot_confusion_matrix(
-            test_labels_np, preds_np, class_names, cm_path,
+            test_labels_np,
+            preds_np,
+            class_names,
+            cm_path,
             normalize=cm_cfg.get("normalize", True),
         )
         print(f"Saved confusion matrix to {cm_path}")
@@ -171,28 +206,32 @@ def run_inference(cfg: DictConfig):
         results["hdbscan_silhouette"] = hdb["silhouette"]
 
     metrics_out = {
-        "val_knn_top1": format(results['top1'], ".4f"),
-        #"val_knn_top5": format(results['top5'], ".4f"),
-        "val_silhouette": format(results['silhouette'], ".4f"),
-        "val_silhouette_umap": format(results['silhouette_umap'], ".4f"),
-        "val_purity@1": format(results['purity@1'], ".4f"),
-        "val_purity@10": format(results['purity@10'], ".4f"),
-        "val_purity@100": format(results['purity@100'], ".4f"),
-        "val_purity@1000": format(results['purity@1000'], ".4f"),
-        "val_purity_umap@1": format(results['purity_umap@1'], ".4f"),
-        "val_purity_umap@10": format(results['purity_umap@10'], ".4f"),
-        "val_purity_umap@100": format(results['purity_umap@100'], ".4f"),
-        "val_purity_umap@1000": format(results['purity_umap@1000'], ".4f"),
-        "val_purity@100_classes": results['val_purity@100_classes'],
-        "val_purity_umap@100_classes": results['val_purity_umap@100_classes'],
-        "inference_throughput_samples_per_min": format(throughput_samples_per_min, ".2f"),
+        "val_knn_top1": format(results["top1"], ".4f"),
+        # "val_knn_top5": format(results['top5'], ".4f"),
+        "val_silhouette": format(results["silhouette"], ".4f"),
+        "val_silhouette_umap": format(results["silhouette_umap"], ".4f"),
+        "val_purity@1": format(results["purity@1"], ".4f"),
+        "val_purity@10": format(results["purity@10"], ".4f"),
+        "val_purity@100": format(results["purity@100"], ".4f"),
+        "val_purity@1000": format(results["purity@1000"], ".4f"),
+        "val_purity_umap@1": format(results["purity_umap@1"], ".4f"),
+        "val_purity_umap@10": format(results["purity_umap@10"], ".4f"),
+        "val_purity_umap@100": format(results["purity_umap@100"], ".4f"),
+        "val_purity_umap@1000": format(results["purity_umap@1000"], ".4f"),
+        "val_purity@100_classes": results["val_purity@100_classes"],
+        "val_purity_umap@100_classes": results["val_purity_umap@100_classes"],
+        "inference_throughput_samples_per_min": format(
+            throughput_samples_per_min, ".2f"
+        ),
     }
-    if "top5" in results: # only if available
-        metrics_out["val_knn_top5"] = format(results['top5'], ".4f")
-    
+    if "top5" in results:  # only if available
+        metrics_out["val_knn_top5"] = format(results["top5"], ".4f")
+
     if "hdbscan_n_clusters" in results:
         metrics_out["val_hdbscan_n_clusters"] = results["hdbscan_n_clusters"]
-        metrics_out["val_hdbscan_silhouette"] = format(results["hdbscan_silhouette"], ".4f")
+        metrics_out["val_hdbscan_silhouette"] = format(
+            results["hdbscan_silhouette"], ".4f"
+        )
 
     with open(hydra_out / "results.json", "w") as f:
         json.dump({"seed": cfg.seed, "metrics": metrics_out}, f)

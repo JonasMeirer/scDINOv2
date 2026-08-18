@@ -51,11 +51,7 @@ def vit_get_last_selfattention(vit: nn.Module, images: Tensor) -> Tensor:
     x = last.norm1(x)
     a = last.attn
     B, N, _ = x.shape
-    qkv = (
-        a.qkv(x)
-        .reshape(B, N, 3, a.num_heads, a.head_dim)
-        .permute(2, 0, 3, 1, 4)
-    )
+    qkv = a.qkv(x).reshape(B, N, 3, a.num_heads, a.head_dim).permute(2, 0, 3, 1, 4)
     q, k, _ = qkv.unbind(0)
     q, k = a.q_norm(q), a.k_norm(k)
     attn = (q @ k.transpose(-2, -1)) * a.scale
@@ -90,8 +86,7 @@ def vit_get_cls_attention_map(
     if head_fusion == "none":
         return cls_to_patch
     raise ValueError(
-        f"Invalid head_fusion: {head_fusion!r}. "
-        "Expected one of: 'mean', 'max', 'none'."
+        f"Invalid head_fusion: {head_fusion!r}. Expected one of: 'mean', 'max', 'none'."
     )
 
 

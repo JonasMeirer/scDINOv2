@@ -367,7 +367,7 @@ class DINO(L.LightningModule):
             import traceback
 
             traceback.print_exc()
-            
+
         # Silhouette score on validation embeddings
         try:
             val_features_np = val_features.cpu().numpy()
@@ -392,9 +392,7 @@ class DINO(L.LightningModule):
                     on_epoch=True,
                     on_step=False,
                 )
-                print(
-                    f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}"
-                )
+                print(f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}")
         except Exception as e:
             print(f"Silhouette score computation failed: {e}")
             import traceback

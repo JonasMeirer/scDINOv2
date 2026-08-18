@@ -219,15 +219,16 @@ class DINOViewTransform:
     ):
 
         transform = []
-        
+
         if do_center_crop:
             transform.append(T.CenterCrop(crop_size))
         else:
-            transform.append(T.RandomResizedCrop(
-                size=crop_size,
-                scale=crop_scale,
-                interpolation=InterpolationMode.BICUBIC,
-            ),
+            transform.append(
+                T.RandomResizedCrop(
+                    size=crop_size,
+                    scale=crop_scale,
+                    interpolation=InterpolationMode.BICUBIC,
+                ),
             )
         transform += [
             T.RandomHorizontalFlip(p=hf_prob),
@@ -258,9 +259,11 @@ class DINOViewTransform:
 
         if cutout_prob > 0:
             transform.append(
-                T.RandomErasing(p=cutout_prob, scale=cutout_scale, ratio=cutout_ratio, value=0)
+                T.RandomErasing(
+                    p=cutout_prob, scale=cutout_scale, ratio=cutout_ratio, value=0
+                )
             )
-            
+
         if normalize:
             transform.append(T.Normalize(mean=normalize["mean"], std=normalize["std"]))
 
@@ -317,7 +320,9 @@ class RandomChannelGamma:
         self.log_gamma_hi = math.log(gamma_range[1])
 
     def __call__(self, x):
-        log_gammas = torch.empty(x.size(0)).uniform_(self.log_gamma_lo, self.log_gamma_hi)
+        log_gammas = torch.empty(x.size(0)).uniform_(
+            self.log_gamma_lo, self.log_gamma_hi
+        )
         gammas = log_gammas.exp()[:, None, None]
         return x.sign() * x.abs().pow(gammas)
 

@@ -17,7 +17,7 @@ from src.scdino.models.lightning.utils import (
     DINOLoss,
     IBOTPatchLoss,
     KoLeoLoss,
-    #SIGRegLoss,
+    # SIGRegLoss,
     update_momentum,
     cosine_schedule,
     linear_warmup_schedule,
@@ -208,7 +208,7 @@ class DINOv2(L.LightningModule):
             start_value=teacher_temp_config["start_value"],
             end_value=teacher_temp_config["end_value"],
         )
-        
+
         dino_loss = self.dino_criterion(
             teacher_out=teacher_cls_out.chunk(2),
             student_out=student_cls_out.chunk(len(views)),
@@ -220,7 +220,7 @@ class DINOv2(L.LightningModule):
             mask=block_mask,
             teacher_temp=teacher_temp,
         )
-        
+
         koleo_loss = sum(
             self.koleo_criterion(t) for t in student_global_cls_token.chunk(2)
         )
@@ -487,9 +487,7 @@ class DINOv2(L.LightningModule):
                     on_epoch=True,
                     on_step=False,
                 )
-                print(
-                    f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}"
-                )
+                print(f"Epoch {self.current_epoch}: Silhouette Score={sil_score:.4f}")
         except Exception as e:
             print(f"Silhouette score computation failed: {e}")
             import traceback

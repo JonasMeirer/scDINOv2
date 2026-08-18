@@ -624,7 +624,7 @@ class MaskedVisionTransformerTIMM(MaskedVisionTransformer):
         softmax attention matrix. This method runs all blocks except the last
         normally, then recomputes the last block's attention explicitly so that
         the softmax weights can be returned.
-        Original code: 
+        Original code:
         https://github.com/huggingface/pytorch-image-models/blob/2703d155c88d27bba9a1f465f5489a7947ffc313/timm/models/vision_transformer.py#L58
         """
         tokens = self.preprocess(
@@ -637,11 +637,7 @@ class MaskedVisionTransformerTIMM(MaskedVisionTransformer):
         x = last.norm1(tokens)
         a = last.attn
         B, N, C = x.shape
-        qkv = (
-            a.qkv(x)
-            .reshape(B, N, 3, a.num_heads, a.head_dim)
-            .permute(2, 0, 3, 1, 4)
-        )
+        qkv = a.qkv(x).reshape(B, N, 3, a.num_heads, a.head_dim).permute(2, 0, 3, 1, 4)
         q, k, _ = qkv.unbind(0)
         q, k = a.q_norm(q), a.k_norm(k)
         attn = (q @ k.transpose(-2, -1)) * a.scale

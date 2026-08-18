@@ -29,7 +29,13 @@ class TestLinearWarmupSchedule:
             {"step": 0, "warmup_steps": 10, "start_value": 0.04, "end_value": 0.0},
             {"step": 0, "warmup_steps": 10, "start_value": 0.09, "end_value": 0.07},
         ],
-        ids=["negative-step", "negative-warmup", "negative-start", "zero-end", "start>end"],
+        ids=[
+            "negative-step",
+            "negative-warmup",
+            "negative-start",
+            "zero-end",
+            "start>end",
+        ],
     )
     def test_rejects_invalid_arguments(self, kwargs):
         with pytest.raises(ValueError):

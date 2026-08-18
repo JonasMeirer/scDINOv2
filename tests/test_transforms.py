@@ -139,7 +139,9 @@ class TestPhotometricAugmentations:
 
     def test_gamma_of_one_is_the_identity(self):
         x = torch.rand(5, 8, 8) * 4
-        assert torch.allclose(RandomChannelGamma(gamma_range=(1.0, 1.0))(x), x, atol=1e-6)
+        assert torch.allclose(
+            RandomChannelGamma(gamma_range=(1.0, 1.0))(x), x, atol=1e-6
+        )
 
     def test_gaussian_noise_perturbs_without_shifting_the_mean(self):
         torch.manual_seed(0)
@@ -169,10 +171,17 @@ class TestDINOViewTransform:
     def test_center_crop_is_deterministic(self):
         """A centre crop must return the same pixels every time."""
         transform = DINOViewTransform(
-            crop_size=8, do_center_crop=True,
-            hf_prob=0, vf_prob=0, rr_prob=0,
-            intensity_scale_prob=0, intensity_shift_prob=0, gamma_prob=0,
-            gaussian_noise_prob=0, random_channel_drop_prob=0, gaussian_blur=0,
+            crop_size=8,
+            do_center_crop=True,
+            hf_prob=0,
+            vf_prob=0,
+            rr_prob=0,
+            intensity_scale_prob=0,
+            intensity_shift_prob=0,
+            gamma_prob=0,
+            gaussian_noise_prob=0,
+            random_channel_drop_prob=0,
+            gaussian_blur=0,
             normalize=None,
         )
         x = torch.rand(5, 16, 16)
@@ -180,10 +189,17 @@ class TestDINOViewTransform:
 
     def test_disabling_every_augmentation_leaves_a_plain_crop(self):
         transform = DINOViewTransform(
-            crop_size=16, do_center_crop=True,
-            hf_prob=0, vf_prob=0, rr_prob=0,
-            intensity_scale_prob=0, intensity_shift_prob=0, gamma_prob=0,
-            gaussian_noise_prob=0, random_channel_drop_prob=0, gaussian_blur=0,
+            crop_size=16,
+            do_center_crop=True,
+            hf_prob=0,
+            vf_prob=0,
+            rr_prob=0,
+            intensity_scale_prob=0,
+            intensity_shift_prob=0,
+            gamma_prob=0,
+            gaussian_noise_prob=0,
+            random_channel_drop_prob=0,
+            gaussian_blur=0,
             normalize=None,
         )
         x = torch.rand(5, 16, 16)

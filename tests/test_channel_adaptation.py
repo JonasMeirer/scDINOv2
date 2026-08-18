@@ -46,8 +46,12 @@ class TestConvMod:
                 adapted.weight[:, channel : channel + 1], expected
             )
 
-    @pytest.mark.parametrize("flavor,index", [("pick_1", 0), ("pick_2", 1), ("pick_3", 2)])
-    def test_pick_flavors_seed_from_the_named_rgb_channel(self, rgb_conv, flavor, index):
+    @pytest.mark.parametrize(
+        "flavor,index", [("pick_1", 0), ("pick_2", 1), ("pick_3", 2)]
+    )
+    def test_pick_flavors_seed_from_the_named_rgb_channel(
+        self, rgb_conv, flavor, index
+    ):
         adapted = conv_mod(rgb_conv, out_channels=5, flavor=flavor)
         expected = rgb_conv.weight[:, index : index + 1]
         for channel in range(5):
@@ -67,8 +71,11 @@ class TestConvMod:
         x = torch.randn(2, 1, 16, 16).expand(-1, 3, -1, -1).contiguous()
         original_w0 = rgb_conv.weight[:, 0:1]
         expected = nn.functional.conv2d(
-            x, original_w0.expand(-1, 3, -1, -1).contiguous(), rgb_conv.bias,
-            stride=rgb_conv.stride, padding=rgb_conv.padding,
+            x,
+            original_w0.expand(-1, 3, -1, -1).contiguous(),
+            rgb_conv.bias,
+            stride=rgb_conv.stride,
+            padding=rgb_conv.padding,
         )
         torch.testing.assert_close(adapted(x), expected)
 
@@ -85,7 +92,9 @@ class TestPerChannelWrapper:
         assert out.shape == (2, 5 * 7)
 
     def test_mean_flavor_averages_over_channels(self, base_model):
-        wrapper = PerChannelWrapper(base_model, lambda o: o, num_channels=5, flavor="mean")
+        wrapper = PerChannelWrapper(
+            base_model, lambda o: o, num_channels=5, flavor="mean"
+        )
         out = wrapper(torch.randn(2, 5, 16, 16))
         assert out.shape == (2, 7)
 
@@ -105,7 +114,9 @@ class TestPerChannelWrapper:
                 seen.append(x.shape)
                 return base_model(x)
 
-        PerChannelWrapper(Recorder(), lambda o: o, num_channels=5)(torch.randn(2, 5, 16, 16))
+        PerChannelWrapper(Recorder(), lambda o: o, num_channels=5)(
+            torch.randn(2, 5, 16, 16)
+        )
         assert len(seen) == 5
         assert all(shape[1] == 3 for shape in seen)
 

@@ -37,7 +37,9 @@ def main(cfg: DictConfig) -> None:
     metrics = {}
     for key in ["val/knn_top1", "val/knn_top5", "val/silhouette"]:
         val = trainer.callback_metrics.get(key)
-        metrics[key.replace("/", "_")] = format(float(val), ".4f") if val is not None else None
+        metrics[key.replace("/", "_")] = (
+            format(float(val), ".4f") if val is not None else None
+        )
 
     results = {
         "seed": cfg.seed,

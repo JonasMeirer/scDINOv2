@@ -70,10 +70,14 @@ def build_model(model_id, flavor, num_channels, device):
         if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, _pooler_output, num_channels)
         elif flavor == "DINO4CELL_MEAN":
-            model = PerChannelWrapper(model, _pooler_output, num_channels, flavor="mean")
+            model = PerChannelWrapper(
+                model, _pooler_output, num_channels, flavor="mean"
+            )
         else:
             model.embeddings.patch_embeddings = conv_mod(
-                model.embeddings.patch_embeddings, num_channels, flavor=flavor,
+                model.embeddings.patch_embeddings,
+                num_channels,
+                flavor=flavor,
             )
 
     elif model_id.startswith("facebook/dinov2"):
@@ -83,10 +87,14 @@ def build_model(model_id, flavor, num_channels, device):
         if flavor == "DINO4CELL_CONCAT":
             model = PerChannelWrapper(model, _pooler_output, num_channels)
         elif flavor == "DINO4CELL_MEAN":
-            model = PerChannelWrapper(model, _pooler_output, num_channels, flavor="mean")
+            model = PerChannelWrapper(
+                model, _pooler_output, num_channels, flavor="mean"
+            )
         else:
             model.embeddings.patch_embeddings.projection = conv_mod(
-                model.embeddings.patch_embeddings.projection, num_channels, flavor=flavor,
+                model.embeddings.patch_embeddings.projection,
+                num_channels,
+                flavor=flavor,
             )
             model.embeddings.patch_embeddings.num_channels = num_channels
 
@@ -96,13 +104,19 @@ def build_model(model_id, flavor, num_channels, device):
         backbone = model.backbone
 
         def attn_fn(images, target_size):
-            heatmap = backbone.get_cls_attention_map(images.to(device), head_fusion="none")
-            return F.interpolate(heatmap, size=target_size, mode="bilinear", align_corners=False)
+            heatmap = backbone.get_cls_attention_map(
+                images.to(device), head_fusion="none"
+            )
+            return F.interpolate(
+                heatmap, size=target_size, mode="bilinear", align_corners=False
+            )
 
     if isinstance(model, PerChannelWrapper):
+
         def embed(images):
             return model(images)
     else:
+
         def embed(images):
             return _pooler_output(model(images))
 
@@ -189,7 +203,9 @@ def plot_umap_by_class(viz_pts, viz_lab, n_per_class, class_names, path):
     for i, cls in enumerate(unique):
         m = viz_lab == cls
         label = class_names[int(cls)] if class_names is not None else str(int(cls))
-        ax.scatter(viz_pts[m, 0], viz_pts[m, 1], s=4, alpha=0.6, color=cmap(i), label=label)
+        ax.scatter(
+            viz_pts[m, 0], viz_pts[m, 1], s=4, alpha=0.6, color=cmap(i), label=label
+        )
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
     ax.set_title(f"UMAP of test embeddings (≤{n_per_class}/class)")
@@ -201,10 +217,22 @@ def plot_umap_by_class(viz_pts, viz_lab, n_per_class, class_names, path):
 
 def plot_umap_correctness(viz_pts, viz_correct, n_per_class, path):
     fig, ax = plt.subplots(figsize=(8, 8))
-    ax.scatter(viz_pts[viz_correct, 0], viz_pts[viz_correct, 1],
-               s=4, alpha=0.6, color="lightgray", label="correct")
-    ax.scatter(viz_pts[~viz_correct, 0], viz_pts[~viz_correct, 1],
-               s=4, alpha=0.6, color="red", label="incorrect")
+    ax.scatter(
+        viz_pts[viz_correct, 0],
+        viz_pts[viz_correct, 1],
+        s=4,
+        alpha=0.6,
+        color="lightgray",
+        label="correct",
+    )
+    ax.scatter(
+        viz_pts[~viz_correct, 0],
+        viz_pts[~viz_correct, 1],
+        s=4,
+        alpha=0.6,
+        color="red",
+        label="incorrect",
+    )
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
     ax.set_title(f"UMAP of test embeddings — kNN correctness (≤{n_per_class}/class)")
@@ -233,7 +261,9 @@ def plot_confusion_matrix(y_true, y_pred, class_names, path, normalize=True):
 
     n = cm_disp.shape[0]
     tick_labels = (
-        [class_names[i] for i in range(n)] if class_names is not None else [str(i) for i in range(n)]
+        [class_names[i] for i in range(n)]
+        if class_names is not None
+        else [str(i) for i in range(n)]
     )
     side = max(6, 0.5 * n + 2)
     fig, ax = plt.subplots(figsize=(side, side))
@@ -251,8 +281,12 @@ def plot_confusion_matrix(y_true, y_pred, class_names, path, normalize=True):
         for i in range(n):
             for j in range(n):
                 ax.text(
-                    j, i, format(cm_disp[i, j], fmt),
-                    ha="center", va="center", fontsize=7,
+                    j,
+                    i,
+                    format(cm_disp[i, j], fmt),
+                    ha="center",
+                    va="center",
+                    fontsize=7,
                     color="white" if cm_disp[i, j] > thresh else "black",
                 )
 
@@ -284,8 +318,10 @@ def run_hdbscan(features, hdbscan_cfg, plot_path=None):
     labels = clusterer.fit_predict(features)
     n_clusters = int(len(set(labels)) - (1 if -1 in labels else 0))
     n_noise = int((labels == -1).sum())
-    print(f"HDBSCAN: {n_clusters} clusters, {n_noise} noise points "
-            f"({n_noise / len(labels) * 100:.1f}%)")
+    print(
+        f"HDBSCAN: {n_clusters} clusters, {n_noise} noise points "
+        f"({n_noise / len(labels) * 100:.1f}%)"
+    )
 
     mask = labels != -1
     if n_clusters >= 2 and mask.sum() >= 2:
@@ -297,7 +333,9 @@ def run_hdbscan(features, hdbscan_cfg, plot_path=None):
 
     if plot_path is not None and n_clusters >= 2:
         cluster_ids = sorted(c for c in set(labels.tolist()) if c != -1)
-        centroids = np.stack([features[labels == cid].mean(axis=0) for cid in cluster_ids])
+        centroids = np.stack(
+            [features[labels == cid].mean(axis=0) for cid in cluster_ids]
+        )
         dists = pdist(centroids, metric=hdbscan_cfg.metric)
         Z = linkage(dists, method="average")
         order = leaves_list(Z)
