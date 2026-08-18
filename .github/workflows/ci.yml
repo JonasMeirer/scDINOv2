@@ -41,6 +41,32 @@ jobs:
       - name: Run tests
         run: uv run pytest -v --durations=10
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Only the dev group is needed to lint, which skips the large CUDA wheels
+      # a full `uv sync` would pull in. Resolving from the lockfile also keeps
+      # the linter version identical to the one developers run locally, so CI
+      # cannot fail on rules that a newer ruff introduced.
+      - name: Install linter
+        run: uv sync --only-group dev --locked
+
+      - name: Lint
+        run: uv run --no-sync ruff check src/ tests/ --output-format=github
+
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check src/ tests/
+
   licensing:
     name: Licensing files present
     runs-on: ubuntu-latest

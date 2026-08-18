@@ -2679,7 +2679,6 @@ dependencies = [
     { name = "mlflow" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "ruff" },
     { name = "scikit-image" },
     { name = "scikit-learn" },
     { name = "seaborn" },
@@ -2698,6 +2697,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -2712,7 +2712,6 @@ requires-dist = [
     { name = "mlflow", specifier = ">=1.27.0" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "pyarrow", specifier = ">=24.0.0" },
-    { name = "ruff", specifier = ">=0.15.7" },
     { name = "scikit-image", specifier = ">=0.26.0" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
@@ -2728,7 +2727,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0" }]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.15.7" },
+]
 
 [[package]]
 name = "scikit-image"

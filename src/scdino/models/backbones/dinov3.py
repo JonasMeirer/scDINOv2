@@ -1370,9 +1370,9 @@ def vit_7b(patch_size=16, **kwargs):
 # and HuggingFace export all work without further edits in those files.
 # ---------------------------------------------------------------------------
 
-import copy as _copy
-from torch.nn import Parameter
-from scdino.models.backbones.dinov2 import (
+import copy as _copy  # noqa: E402
+from torch.nn import Parameter  # noqa: E402
+from scdino.models.backbones.dinov2 import (  # noqa: E402
     DINOv2Head,
     DINOv2ProjectionHead,
     freeze_eval_module,
