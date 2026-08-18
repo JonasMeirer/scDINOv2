@@ -192,12 +192,6 @@ class DINO(L.LightningModule):
         return optim
 
     def on_before_optimizer_step(self, optimizer: AdamW, *args) -> None:
-        # Optionally zero out the learning rate of the last layer.
-        if self.current_epoch < 1:
-            for param_group in optimizer.param_groups:
-                if "last_layer" in param_group:
-                    param_group["lr"] = 0.0
-
         # Apply weight decay schedule
         weight_decay_config = self.training_config["weight_decay"]
         weight_decay = cosine_schedule(

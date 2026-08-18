@@ -22,6 +22,7 @@ import lightning as L
 from src.scdino.models.backbones.dinov3 import DINOv3 as DINOv3Skeleton
 from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
 from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
+from src.scdino.models.lightning.hooks import freeze_last_layer_gradients
 from src.scdino.models.lightning.utils import (
     DINOLoss,
     IBOTPatchLoss,
@@ -291,11 +292,6 @@ class DINOv3(L.LightningModule):
         return optim
 
     def on_before_optimizer_step(self, optimizer: AdamW, *args) -> None:
-        if self.current_epoch < 1:
-            for param_group in optimizer.param_groups:
-                if "last_layer" in param_group:
-                    param_group["lr"] = 0.0
-
         weight_decay_config = self.training_config["weight_decay"]
         weight_decay = cosine_schedule(
             step=self.trainer.global_step,
@@ -306,6 +302,19 @@ class DINOv3(L.LightningModule):
         for group in optimizer.param_groups:
             if group["weight_decay"] != 0.0:
                 group["weight_decay"] = weight_decay
+
+    def on_after_backward(self):
+        """Freeze the projection head's output layer for the warmup epochs.
+
+        Runs after backward and before the optimizer step. Replaces an earlier
+        attempt that inspected `optimizer.param_groups` for a "last_layer" key,
+        which never matched because param groups only hold hyperparameters.
+        """
+        freeze_last_layer_gradients(
+            self.student_head,
+            current_epoch=self.current_epoch,
+            freeze_epochs=self.training_config.get("freeze_last_layer_epochs", 1),
+        )
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         momentum_config = self.training_config["momentum"]
