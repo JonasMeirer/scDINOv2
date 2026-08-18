@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from src.scdino.models.lightning.utils import (
+from scdino.models.lightning.utils import (
     DINOLoss,
     IBOTPatchLoss,
     KoLeoLoss,

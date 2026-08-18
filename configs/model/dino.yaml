@@ -1,5 +1,5 @@
 # DINO Model Configuration
-_target_: src.scdino.models.lightning.dino.DINO
+_target_: scdino.models.lightning.dino.DINO
 
 name: "dino"
 

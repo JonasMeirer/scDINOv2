@@ -10,8 +10,8 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
-from src.scdino.models.lightning.dinov2 import DINOv2
+from scdino.models.huggingface import ScDINOConfig, ScDINOModel
+from scdino.models.lightning.dinov2 import DINOv2
 
 
 @pytest.fixture

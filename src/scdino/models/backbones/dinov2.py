@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from timm.models.vision_transformer import VisionTransformer
 from timm.layers.pos_embed import resample_abs_pos_embed
 
-from src.scdino.models import utils
+from scdino.models import utils
 
 
 def freeze_eval_module(module: nn.Module) -> None:

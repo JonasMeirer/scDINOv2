@@ -7,4 +7,4 @@ set -euo pipefail
 
 : "${DATA_DIR:?Set DATA_DIR to the dataset root (the folder holding the train/ and val/ class directories), e.g. export DATA_DIR=/path/to/data}"
 
-uv run python -m src.scdino.inference.run "$@"
+uv run python -m scdino.inference.run "$@"

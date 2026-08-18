@@ -11,16 +11,21 @@ uv sync
 export DATA_DIR=/path/to/data   # folder with train/ and val/ subdirectories of .tiff class folders
 ```
 
+`uv sync` installs `scdino` into the environment as an editable package, so
+`import scdino` and the `python -m scdino.*` entry points work from any working
+directory. Hydra resolves `configs/` relative to the package source, so the
+commands below do not need to be run from the repository root.
+
 ## Training
 
 ```bash
-python -m src.scdino.train.run
+python -m scdino.train.run
 ```
 
 Override any config via [Hydra](https://hydra.cc/) CLI:
 
 ```bash
-python -m src.scdino.train.run model=dino training.max_epochs=50 hardware.devices=2 logging=wandb
+python -m scdino.train.run model=dino training.max_epochs=50 hardware.devices=2 logging=wandb
 ```
 
 The trained teacher backbone is saved as a HuggingFace model in `hf_model/` under the output directory. A `results.json` with metrics, parameter count, timing, and hardware info is written alongside it.
@@ -30,8 +35,8 @@ The trained teacher backbone is saved as a HuggingFace model in `hf_model/` unde
 Evaluate a trained or pretrained model using kNN:
 
 ```bash
-python -m src.scdino.inference.run local_model_path=outputs/train/.../hf_model
-python -m src.scdino.inference.run model=pretrained/dinov2-large local_model_path=null
+python -m scdino.inference.run local_model_path=outputs/train/.../hf_model
+python -m scdino.inference.run model=pretrained/dinov2-large local_model_path=null
 ```
 
 ## Benchmarks
@@ -47,7 +52,7 @@ Systematic experiments via Hydra `--multirun`. Available experiment configs:
 ### Train-then-evaluate pipeline
 
 ```bash
-python -m src.scdino.benchmark.run \
+python -m scdino.benchmark.run \
   --train-args "+experiment=scaling datamodule.loader.max_train_samples=100,500,1000 seed=42,43,44" \
   --inference-args "eval.k=20"
 ```
@@ -55,7 +60,7 @@ python -m src.scdino.benchmark.run \
 ### Collecting results
 
 ```bash
-python -m src.scdino.benchmark.collect outputs/benchmark/scaling/
+python -m scdino.benchmark.collect outputs/benchmark/scaling/
 ```
 
 Produces `benchmark_summary.csv` (per-run) and `benchmark_summary_agg.csv` (mean/std across seeds).
@@ -68,7 +73,7 @@ Extract Cellpose morphological features and evaluate with kNN:
 ```bash
 python src/scdino/classic/cellpose_features.py --data-dir $DATA_DIR/train --output features_train.csv
 python src/scdino/classic/cellpose_features.py --data-dir $DATA_DIR/val --output features_val.csv
-python -m src.scdino.classic.run_knn --train-csv features_train.csv --val-csv features_val.csv
+python -m scdino.classic.run_knn --train-csv features_train.csv --val-csv features_val.csv
 ```
 
 ## Configuration

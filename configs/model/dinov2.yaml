@@ -1,5 +1,5 @@
 # DINOv2 Model Configuration
-_target_: src.scdino.models.lightning.dinov2.DINOv2
+_target_: scdino.models.lightning.dinov2.DINOv2
 
 name: "dinov2"
 

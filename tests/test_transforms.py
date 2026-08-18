@@ -4,7 +4,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from src.scdino.data.transforms.dino import (
+from scdino.data.transforms.dino import (
     AddGaussianNoise,
     DINOTransform,
     DINOViewTransform,
@@ -13,7 +13,7 @@ from src.scdino.data.transforms.dino import (
     RandomChannelIntensityScale,
     RandomChannelIntensityShift,
 )
-from src.scdino.data.transforms.trafo import Trafo
+from scdino.data.transforms.trafo import Trafo
 
 
 @pytest.fixture

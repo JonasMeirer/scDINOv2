@@ -1,6 +1,6 @@
 # DINOv3 Model Configuration
 # Vanilla DINOv3 backbone (DinoVisionTransformer) with axial 2D RoPE.
-_target_: src.scdino.models.lightning.dinov3.DINOv3
+_target_: scdino.models.lightning.dinov3.DINOv3
 
 name: "dinov3"
 

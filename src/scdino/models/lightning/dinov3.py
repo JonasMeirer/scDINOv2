@@ -1,7 +1,7 @@
 """Lightning module for the DINOv3 backbone.
 
-Mirrors :mod:`src.scdino.models.lightning.dinov2_StrucPerc` (which itself
-mirrors :mod:`src.scdino.models.lightning.dinov2`). Only the backbone
+Mirrors :mod:`scdino.models.lightning.dinov2_StrucPerc` (which itself
+mirrors :mod:`scdino.models.lightning.dinov2`). Only the backbone
 import and ``save_pretrained`` are different; the rest of the
 training/eval logic is reused as-is, since
 :class:`MaskedDinoVisionTransformer` exposes the same public surface as
@@ -19,11 +19,11 @@ from sklearn.metrics import silhouette_score
 
 import lightning as L
 
-from src.scdino.models.backbones.dinov3 import DINOv3 as DINOv3Skeleton
-from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
-from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
-from src.scdino.models.lightning.hooks import freeze_last_layer_gradients
-from src.scdino.models.lightning.utils import (
+from scdino.models.backbones.dinov3 import DINOv3 as DINOv3Skeleton
+from scdino.eval.knn import knn_classifier, compute_knn_accuracy
+from scdino.models.huggingface import ScDINOConfig, ScDINOModel
+from scdino.models.lightning.hooks import freeze_last_layer_gradients
+from scdino.models.lightning.utils import (
     DINOLoss,
     IBOTPatchLoss,
     KoLeoLoss,

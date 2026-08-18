@@ -1,6 +1,6 @@
 """Structural guards on the source tree.
 
-`src/scdino` is imported as `src.scdino.*` from the repository root. Every
+`src/scdino` is imported as `scdino.*` from the repository root. Every
 directory below it must be a *regular* package, i.e. carry an `__init__.py`.
 
 A directory without one still imports, as a PEP 420 implicit namespace package,
@@ -53,7 +53,7 @@ def test_packages_import_as_regular_packages(package):
     """A regular package has a real __file__; a namespace package has None."""
     import importlib
 
-    module_name = ".".join(("src", *package.relative_to(SRC.parent).parts))
+    module_name = ".".join(package.relative_to(SRC.parent).parts)
     module = importlib.import_module(module_name)
     assert getattr(module, "__file__", None) is not None, (
         f"{module_name} imported as a namespace package"

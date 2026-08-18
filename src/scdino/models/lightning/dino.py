@@ -9,15 +9,15 @@ from sklearn.metrics import silhouette_score
 
 import lightning as L
 
-from src.scdino.models.backbones.dino import DINO as DINOSkeleton
-from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
-from src.scdino.models.lightning.utils import (
+from scdino.models.backbones.dino import DINO as DINOSkeleton
+from scdino.eval.knn import knn_classifier, compute_knn_accuracy
+from scdino.models.lightning.utils import (
     DINOLoss,
     update_momentum,
     cosine_schedule,
     linear_warmup_schedule,
 )
-from src.scdino.models.huggingface import ScDINOConfig, ScDINOModel
+from scdino.models.huggingface import ScDINOConfig, ScDINOModel
 
 
 class DINO(L.LightningModule):
@@ -91,7 +91,7 @@ class DINO(L.LightningModule):
         Shape: ``(B, num_heads, N, N)``. Only supported for ViT backbones.
         See ``vit_get_last_selfattention``.
         """
-        from src.scdino.models.backbones.dino import vit_get_last_selfattention
+        from scdino.models.backbones.dino import vit_get_last_selfattention
 
         self.teacher_backbone.eval()
         return vit_get_last_selfattention(self.teacher_backbone, x)
@@ -102,7 +102,7 @@ class DINO(L.LightningModule):
 
         See ``vit_get_cls_attention_map``.
         """
-        from src.scdino.models.backbones.dino import vit_get_cls_attention_map
+        from scdino.models.backbones.dino import vit_get_cls_attention_map
 
         self.teacher_backbone.eval()
         return vit_get_cls_attention_map(

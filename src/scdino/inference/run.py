@@ -10,9 +10,9 @@ import umap
 from omegaconf import DictConfig
 from sklearn.metrics import silhouette_score
 
-from src.scdino.eval.knn import knn_classifier, compute_knn_accuracy
-from src.scdino.eval.purity import compute_purity, purity_per_class
-from src.scdino.inference.utils import (
+from scdino.eval.knn import knn_classifier, compute_knn_accuracy
+from scdino.eval.purity import compute_purity, purity_per_class
+from scdino.inference.utils import (
     build_model,
     extract_features,
     plot_confusion_matrix,

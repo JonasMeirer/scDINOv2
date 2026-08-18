@@ -13,9 +13,9 @@ from sklearn.metrics import confusion_matrix, silhouette_score
 from tqdm import tqdm
 from transformers import AutoModel
 
-from src.scdino.models.huggingface import ScDINOModel
-from src.scdino.utils.conv_mod import conv_mod
-from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
+from scdino.models.huggingface import ScDINOModel
+from scdino.utils.conv_mod import conv_mod
+from scdino.utils.per_channel_wrapper import PerChannelWrapper
 
 
 def sync_with_training_config(cfg: DictConfig) -> None:

@@ -7,13 +7,13 @@ from transformers.modeling_outputs import BaseModelOutputWithPooling
 from timm.models.vision_transformer import VisionTransformer
 from timm.models.resnet import ResNet, BasicBlock
 
-from src.scdino.models.backbones.dinov2 import MaskedVisionTransformerTIMM
+from scdino.models.backbones.dinov2 import MaskedVisionTransformerTIMM
 
-from src.scdino.models.backbones.dinov3 import (
+from scdino.models.backbones.dinov3 import (
     DinoVisionTransformer,
     MaskedDinoVisionTransformer,
 )
-from src.scdino.models.huggingface.configuration_scdino import ScDINOConfig
+from scdino.models.huggingface.configuration_scdino import ScDINOConfig
 
 
 class ScDINOModel(PreTrainedModel):

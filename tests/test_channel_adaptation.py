@@ -4,8 +4,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from src.scdino.utils.conv_mod import FLAVORS, conv_mod
-from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
+from scdino.utils.conv_mod import FLAVORS, conv_mod
+from scdino.utils.per_channel_wrapper import PerChannelWrapper
 
 
 @pytest.fixture

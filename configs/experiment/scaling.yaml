@@ -13,7 +13,7 @@
 # per-epoch, which would be too frequent for small datasets).
 #
 # Usage:
-#   python -m src.scdino.train.run --multirun \
+#   python -m scdino.train.run --multirun \
 #     +experiment=scaling \
 #     datamodule.loader.max_train_samples=100,500,1000,5000,10000,50000 \
 #     seed=42,43,44

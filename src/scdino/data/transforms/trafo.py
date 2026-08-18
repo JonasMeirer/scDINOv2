@@ -1,7 +1,7 @@
 from omegaconf import DictConfig
 from torch import Tensor
 
-from src.scdino.data.transforms.dino import DINOTransform
+from scdino.data.transforms.dino import DINOTransform
 
 
 class Trafo:

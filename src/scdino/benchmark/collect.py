@@ -5,8 +5,8 @@ Walks a directory tree, reads every results.json, and produces:
   - benchmark_summary_agg.csv      (grouped by condition, mean/std across seeds)
 
 Usage:
-    python -m src.scdino.benchmark.collect outputs/benchmark/scaling/
-    python -m src.scdino.benchmark.collect outputs/benchmark/ --out results/
+    python -m scdino.benchmark.collect outputs/benchmark/scaling/
+    python -m scdino.benchmark.collect outputs/benchmark/ --out results/
 """
 
 from __future__ import annotations

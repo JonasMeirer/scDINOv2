@@ -2667,7 +2667,7 @@ wheels = [
 [[package]]
 name = "scdino"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "cellpose" },
     { name = "hdbscan" },

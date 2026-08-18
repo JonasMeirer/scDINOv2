@@ -13,8 +13,8 @@ import torch
 import torch.nn as nn
 from omegaconf import OmegaConf
 
-from src.scdino.models.backbones.dinov2 import DINOv2ProjectionHead
-from src.scdino.models.lightning.hooks import freeze_last_layer_gradients
+from scdino.models.backbones.dinov2 import DINOv2ProjectionHead
+from scdino.models.lightning.hooks import freeze_last_layer_gradients
 
 
 def make_head(**kwargs):
@@ -67,7 +67,7 @@ class TestFreezeLastLayerGradients:
 
     def test_handles_a_container_with_tied_dino_and_ibot_heads(self):
         """With ibot_separate_head=False both attributes are the same module."""
-        from src.scdino.models.backbones.dinov2 import DINOv2Head
+        from scdino.models.backbones.dinov2 import DINOv2Head
 
         shared = make_head()
         container = DINOv2Head(dino_head=shared, ibot_head=shared)
@@ -77,7 +77,7 @@ class TestFreezeLastLayerGradients:
         assert all(p.grad is None for p in shared.last_layer.parameters())
 
     def test_handles_a_container_with_separate_dino_and_ibot_heads(self):
-        from src.scdino.models.backbones.dinov2 import DINOv2Head
+        from scdino.models.backbones.dinov2 import DINOv2Head
 
         dino_head, ibot_head = make_head(), make_head()
         container = DINOv2Head(dino_head=dino_head, ibot_head=ibot_head)
@@ -98,7 +98,7 @@ class TestDINOv2WarmupIntegration:
 
     @pytest.fixture
     def module(self, tiny_vit_backbone_config, tiny_head_config):
-        from src.scdino.models.lightning.dinov2 import DINOv2
+        from scdino.models.lightning.dinov2 import DINOv2
 
         architecture = OmegaConf.create(
             {

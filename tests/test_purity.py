@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.scdino.eval.purity import (
+from scdino.eval.purity import (
     compute_neighbor_labels,
     compute_purity,
     purity_at_k,

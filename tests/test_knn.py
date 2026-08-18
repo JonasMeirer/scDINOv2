@@ -9,7 +9,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from src.scdino.eval.knn import compute_knn_accuracy, knn_classifier
+from scdino.eval.knn import compute_knn_accuracy, knn_classifier
 
 
 def brute_force_knn(train_features, train_labels, test_features, k, T, num_classes):

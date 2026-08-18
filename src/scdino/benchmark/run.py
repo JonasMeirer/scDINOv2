@@ -3,12 +3,12 @@
 Usage examples:
 
     # Scaling law: train 6 configs x 3 seeds, then evaluate each
-    python -m src.scdino.benchmark.run \
+    python -m scdino.benchmark.run \
       --train-args "+experiment=scaling datamodule.loader.max_train_samples=100,500,1000,5000,10000,50000 seed=42,43,44" \
       --inference-args "eval.k=20"
 
     # Re-evaluate previously trained models with different kNN settings
-    python -m src.scdino.benchmark.run \
+    python -m scdino.benchmark.run \
       --skip-training \
       --train-output-dir outputs/benchmark/scaling/ \
       --inference-args "eval.k=50 eval.T=0.1"
@@ -75,7 +75,7 @@ def main() -> None:
         train_cmd = [
             sys.executable,
             "-m",
-            "src.scdino.train.run",
+            "scdino.train.run",
             "--multirun",
             *args.train_args.split(),
         ]
@@ -107,7 +107,7 @@ def main() -> None:
         inference_cmd = [
             sys.executable,
             "-m",
-            "src.scdino.inference.run",
+            "scdino.inference.run",
             f"local_model_path={hf_path}",
             *args.inference_args.split(),
         ]

@@ -1,4 +1,4 @@
-_target_: src.scdino.data.CHRONOTYPEDataModule
+_target_: scdino.data.CHRONOTYPEDataModule
 
 defaults:
   - transforms: ${model}

@@ -1372,7 +1372,7 @@ def vit_7b(patch_size=16, **kwargs):
 
 import copy as _copy
 from torch.nn import Parameter
-from src.scdino.models.backbones.dinov2 import (
+from scdino.models.backbones.dinov2 import (
     DINOv2Head,
     DINOv2ProjectionHead,
     freeze_eval_module,
@@ -1407,7 +1407,7 @@ def update_drop_path_rate_dinov3(
 class MaskedDinoVisionTransformer(nn.Module):
     """Wrapper that exposes a TIMM/lightly-style API around DINOv3.
 
-    Mirrors :class:`src.scdino.models.backbones.dinov2.MaskedVisionTransformerTIMM`
+    Mirrors :class:`scdino.models.backbones.dinov2.MaskedVisionTransformerTIMM`
     closely enough that the Lightning training step, the iBOT masking logic
     and the visualization helpers all work unchanged. The upstream
     :class:`DinoVisionTransformer` is exposed via the ``vit`` property so
@@ -1488,7 +1488,7 @@ class MaskedDinoVisionTransformer(nn.Module):
 
         The prefix portion is required to be all-False (we never mask CLS
         or storage tokens during iBOT) — this matches what
-        :func:`src.scdino.models.lightning.utils.random_block_mask` produces.
+        :func:`scdino.models.lightning.utils.random_block_mask` produces.
         """
         if mask is None:
             return None
@@ -1681,8 +1681,8 @@ def _build_dinov3_from_config(cfg: Dict[str, Any]) -> DinoVisionTransformer:
 class DINOv3(nn.Module):
     """Top-level DINOv3 model with teacher / student backbones + heads.
 
-    Mirrors :class:`src.scdino.models.backbones.dinov2.DINOv2` and
-    :class:`src.scdino.models.backbones.dinov2_StrucPerc.DINOv2StrucPerc`
+    Mirrors :class:`scdino.models.backbones.dinov2.DINOv2` and
+    :class:`scdino.models.backbones.dinov2_StrucPerc.DINOv2StrucPerc`
     so the same Lightning training loop can drive it. Reuses the existing
     :class:`DINOv2Head` / :class:`DINOv2ProjectionHead` for the projection
     heads.

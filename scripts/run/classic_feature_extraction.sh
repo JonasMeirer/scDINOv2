@@ -17,7 +17,7 @@ FEATURE_CHUNK_SIZE=8
 
 mkdir -p "$OUTPUT_FOLDER"
 
-uv run python src/scdino/classic/cellpose_features.py "$DATA_FOLDER" \
+uv run python -m scdino.classic.cellpose_features "$DATA_FOLDER" \
   -o "$OUTPUT_FOLDER/features.csv" \
   --batch-size "$BATCH_SIZE" \
   --io-workers "$IO_WORKERS" \

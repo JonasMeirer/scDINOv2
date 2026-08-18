@@ -9,7 +9,7 @@ import tifffile
 import numpy as np
 from omegaconf import ListConfig
 
-from src.scdino.data.transforms.trafo import Trafo
+from scdino.data.transforms.trafo import Trafo
 
 
 class CHRONOTYPEDataModule(L.LightningDataModule):

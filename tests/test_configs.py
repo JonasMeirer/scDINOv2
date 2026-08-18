@@ -67,7 +67,7 @@ class TestRootConfigs:
         """max_train_batches is a debugging knob.
 
         Shipping a finite default silently capped every epoch of the
-        documented `python -m src.scdino.train.run` run at that many batches.
+        documented `python -m scdino.train.run` run at that many batches.
         """
         cfg = compose_config("train", [])
         assert cfg.max_train_batches is None

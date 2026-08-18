@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 import zarr
 
-from src.scdino.models.huggingface import ScDINOModel
-from src.scdino.utils.conv_mod import conv_mod
-from src.scdino.utils.per_channel_wrapper import PerChannelWrapper
-from src.scdino.inference.utils import sync_with_training_config
+from scdino.models.huggingface import ScDINOModel
+from scdino.utils.conv_mod import conv_mod
+from scdino.utils.per_channel_wrapper import PerChannelWrapper
+from scdino.inference.utils import sync_with_training_config
 
 
 def write_feature_store(

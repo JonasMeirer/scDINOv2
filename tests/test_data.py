@@ -5,7 +5,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from src.scdino.data.chronotype import (
+from scdino.data.chronotype import (
     CHRONOTYPEDataModule,
     normalize_numpy_robust,
     normalize_numpy_robust_2,

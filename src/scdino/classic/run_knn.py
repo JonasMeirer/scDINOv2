@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.scdino.eval.knn import compute_knn_accuracy, knn_classifier
+from scdino.eval.knn import compute_knn_accuracy, knn_classifier
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

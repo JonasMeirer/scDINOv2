@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.scdino.models.lightning.utils import cosine_schedule, linear_warmup_schedule
+from scdino.models.lightning.utils import cosine_schedule, linear_warmup_schedule
 
 
 class TestLinearWarmupSchedule:
