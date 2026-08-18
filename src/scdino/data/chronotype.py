@@ -18,10 +18,18 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
 
         self.name = dataset
         # PATHS
-        self.data_dir_train = paths.get("train_dir", "/mnt/SSD/Chronotype/train_all")
-        self.data_dir_val = paths.get("val_dir", "/mnt/SSD/Chronotype/val")
+        self.data_dir_train = paths.get("train_dir", None)
+        self.data_dir_val = paths.get("val_dir", None)
         self.test_dir = paths.get("test_dir", None)
         self.predict_dir = paths.get("predict_dir", None)
+
+        for key, value in (("train_dir", self.data_dir_train), ("val_dir", self.data_dir_val)):
+            if not value:
+                raise ValueError(
+                    f"datamodule.paths.{key} is not set. The shipped configs resolve it "
+                    f"from the DATA_DIR environment variable, so either export DATA_DIR "
+                    f"or override datamodule.paths.{key} on the command line."
+                )
 
         # Dataloader
         self.max_train_samples = loader.get("max_train_samples", None)
