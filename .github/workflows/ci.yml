@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --locked fails the build if uv.lock has drifted from pyproject.toml,
+      # so the committed lockfile stays the source of truth.
+      #
+      # Note: pyproject pins torch to the cu121 wheel index, so the first
+      # uncached run downloads a large CUDA wheel even though the suite is
+      # CPU-only. Subsequent runs hit the uv cache.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest -v --durations=10
+
+  licensing:
+    name: Licensing files present
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # This repository redistributes third-party code (Meta DINOv3, Lightly).
+      # The DINOv3 License Agreement requires that a copy of the Agreement
+      # accompany any distribution, so losing these files is a licensing
+      # regression, not just a tidiness problem.
+      - name: Check required licence files
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in LICENSE THIRD_PARTY_NOTICES.md \
+                   licenses/DINOv3-License-Agreement.md \
+                   licenses/lightly-MIT.txt; do
+            if [ ! -s "$f" ]; then
+              echo "::error file=$f::required licence file is missing or empty"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check vendored files carry provenance headers
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in src/scdino/models/utils.py \
+                   src/scdino/models/lightning/utils.py \
+                   src/scdino/models/backbones/dino.py \
+                   src/scdino/models/backbones/dinov2.py \
+                   src/scdino/models/backbones/dinov3.py; do
+            if ! grep -q "PROVENANCE" "$f"; then
+              echo "::error file=$f::vendored file is missing its PROVENANCE header"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check no developer-specific absolute paths are committed
+        run: |
+          set -euo pipefail
+          if git ls-files -z \
+              ':!uv.lock' ':!licenses/*' \
+            | xargs -0 grep -nIE '/home/[a-z]+/|/mnt/(SSD|HDD)/' ; then
+            echo "::error::committed files contain machine-specific absolute paths"
+            exit 1
+          fi
+          echo "no machine-specific absolute paths found"

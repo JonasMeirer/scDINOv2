@@ -102,3 +102,54 @@ src/scdino/
   classic/        Cellpose feature extraction baseline
   utils/          Patch embedding channel adaptation
 ```
+
+## Development
+
+Install the dev dependency group and run the test suite:
+
+```bash
+uv sync
+uv run pytest
+```
+
+The suite is CPU-only and runs in a few seconds, so it is usable as a
+pre-commit gate. It covers the kNN classifier (against a brute-force
+reference), the SSL objectives, the augmentation pipeline, dataset
+normalization, channel adaptation, the HuggingFace export round trip, and the
+composition of every shipped Hydra config.
+
+`tests/test_known_bugs.py` is an executable list of known, unfixed defects.
+Each test asserts the behaviour we *want* and is marked
+`xfail(strict=True)`, so CI stays green while a bug is open and turns **red**
+the moment it is fixed — at which point the marker should be removed and the
+test promoted. Please do not add `xfail` markers there for anything but a
+genuinely open defect.
+
+CI (`.github/workflows/ci.yml`) runs the test suite against the committed
+`uv.lock`, and separately verifies that the licence files and the vendored-code
+provenance headers described below are still present.
+
+## License
+
+The original scDINO source code is released under the [MIT License](LICENSE),
+Copyright (c) 2026 CSEM.
+
+**This repository also redistributes third-party code that is not MIT-licensed.**
+In particular, the upper region of
+`src/scdino/models/backbones/dinov3.py` is vendored from Meta's DINOv3
+reference implementation and is governed by the **DINOv3 License Agreement**,
+which is more restrictive than MIT and carries an acceptable-use policy
+(no military, weapons, nuclear or espionage use, plus trade-control and
+sanctions compliance). It also requires that a copy of the Agreement travel
+with any redistribution, and that you acknowledge use of the DINO materials in
+any resulting publication.
+
+Full inventory and obligations: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Verbatim licence texts: [`licenses/`](licenses/).
+
+If you need a uniformly MIT-licensed tree, delete
+`src/scdino/models/backbones/dinov3.py` along with the `dinov3` model, config
+and Lightning entry points; everything else is MIT.
+
+Pretrained weights fetched at runtime (`facebook/dinov2-*`, `facebook/dinov3-*`)
+carry their own licences, separate from the code licences above.
