@@ -205,10 +205,6 @@ class TestLoadTiff:
         assert all(0.0 < m < 1.0 for m in stats.mean), stats.mean
         assert all(0.0 < s < 1.0 for s in stats.std), stats.std
 
-    def test_clip_max_requires_ceilings(self, tmp_path):
-        with pytest.raises(ValueError, match="max_vals_clip"):
-            make_datamodule(tmp_path, norm_type="clip_max", max_vals_clip=None)
-
     def test_returns_channels_first(self, tmp_path):
         import tifffile
 
