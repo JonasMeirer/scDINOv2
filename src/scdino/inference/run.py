@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 import umap
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import silhouette_score
 
 from scdino.eval.knn import knn_classifier, compute_knn_accuracy
@@ -142,7 +142,20 @@ def run_inference(cfg: DictConfig):
         .values
     )
 
-    ks = (1, 10, 100, 1000)
+    # purity@k needs k neighbours besides the point itself, so k must be below
+    # the sample count. Without this the whole evaluation dies on any run with a
+    # small validation set (sklearn: "n_neighbors = 1001, n_samples_fit = 160").
+    n_sampled = len(test_features_np_sampled)
+    ks = tuple(k for k in (1, 10, 100, 1000) if k < n_sampled)
+    if not ks:
+        raise ValueError(
+            f"only {n_sampled} validation samples after per-class sampling; "
+            "purity@k needs at least 2. Raise max_val_batches or n_cells_per_class."
+        )
+    dropped = [k for k in (1, 10, 100, 1000) if k not in ks]
+    if dropped:
+        print(f"Skipping purity@{dropped} — only {n_sampled} sampled cells")
+
     same_label, purities = compute_purity(test_features_np_sampled, y, ks=ks)
     same_label_umap, purities_umap = compute_purity(umap_features, y, ks=ks)
     for k in ks:
@@ -152,9 +165,12 @@ def run_inference(cfg: DictConfig):
             f"Purity@{k}: {purities[k]:.3f}  |  Purity_umap@{k}: {purities_umap[k]:.3f}"
         )
 
-    print("Purity@100 per class:")
-    per_class = purity_per_class(same_label, y_class, k=100)
-    per_class_umap = purity_per_class(same_label_umap, y_class, k=100)
+    # Per-class breakdown at the largest k this run could actually compute.
+    per_class_k = max(ks)
+    print(f"Purity@{per_class_k} per class:")
+    per_class = purity_per_class(same_label, y_class, k=per_class_k)
+    per_class_umap = purity_per_class(same_label_umap, y_class, k=per_class_k)
+    results["val_purity_per_class_k"] = per_class_k
     results["val_purity@100_classes"] = {
         f"class_{cls}": format(v, ".4f") for cls, v in per_class.items()
     }
@@ -210,14 +226,14 @@ def run_inference(cfg: DictConfig):
         # "val_knn_top5": format(results['top5'], ".4f"),
         "val_silhouette": format(results["silhouette"], ".4f"),
         "val_silhouette_umap": format(results["silhouette_umap"], ".4f"),
-        "val_purity@1": format(results["purity@1"], ".4f"),
-        "val_purity@10": format(results["purity@10"], ".4f"),
-        "val_purity@100": format(results["purity@100"], ".4f"),
-        "val_purity@1000": format(results["purity@1000"], ".4f"),
-        "val_purity_umap@1": format(results["purity_umap@1"], ".4f"),
-        "val_purity_umap@10": format(results["purity_umap@10"], ".4f"),
-        "val_purity_umap@100": format(results["purity_umap@100"], ".4f"),
-        "val_purity_umap@1000": format(results["purity_umap@1000"], ".4f"),
+        # Only the k values this run had enough samples for; a k that was
+        # skipped is simply absent, which the collector reports as empty.
+        **{f"val_purity@{k}": format(results[f"purity@{k}"], ".4f") for k in ks},
+        **{
+            f"val_purity_umap@{k}": format(results[f"purity_umap@{k}"], ".4f")
+            for k in ks
+        },
+        "val_purity_per_class_k": results["val_purity_per_class_k"],
         "val_purity@100_classes": results["val_purity@100_classes"],
         "val_purity_umap@100_classes": results["val_purity_umap@100_classes"],
         "inference_throughput_samples_per_min": format(
@@ -233,8 +249,23 @@ def run_inference(cfg: DictConfig):
             results["hdbscan_silhouette"], ".4f"
         )
 
+    # Provenance matters as much as the metrics here: without it an inference
+    # result is anonymous, and there is no way to tell which sweep arm or
+    # checkpoint produced it. `stage` lets a collector tell these apart from the
+    # results.json that training writes, which uses the same filename.
+    results_doc = {
+        "stage": "inference",
+        "seed": cfg.seed,
+        "model_path": str(cfg.local_model_path)
+        if cfg.get("local_model_path")
+        else None,
+        "model_name": cfg.model.name,
+        "metrics": metrics_out,
+        "config": OmegaConf.to_container(cfg, resolve=True),
+    }
     with open(hydra_out / "results.json", "w") as f:
-        json.dump({"seed": cfg.seed, "metrics": metrics_out}, f)
+        json.dump(results_doc, f, indent=2, default=str)
+    print(f"Wrote {hydra_out / 'results.json'}")
 
 
 if __name__ == "__main__":

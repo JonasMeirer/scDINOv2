@@ -23,8 +23,13 @@ from pathlib import Path
 
 
 def find_hf_models(root: Path) -> list[Path]:
-    """Recursively find all hf_model/ directories under *root*."""
-    return sorted(p.parent for p in root.rglob("hf_model/config.json"))
+    """Find the *run* directories under *root* that hold an exported model.
+
+    Returns the run directory (the one containing `hf_model/`), not the
+    `hf_model/` directory itself: callers append "hf_model" to build the
+    checkpoint path and write the evaluation alongside it.
+    """
+    return sorted(p.parent.parent for p in root.rglob("hf_model/config.json"))
 
 
 def run_command(cmd: list[str], label: str) -> bool:
@@ -55,20 +60,33 @@ def main() -> None:
         help="Extra Hydra overrides for inference (space-separated, as one string)",
     )
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help=(
+            "Sweep directory. Passed to training as hydra.sweep.dir and used as "
+            "the root for model discovery, so the orchestrator knows exactly "
+            "where its own outputs are. Defaults to the sweep dir baked into "
+            "the experiment config, which must then be given explicitly when "
+            "using --skip-training"
+        ),
+    )
+    parser.add_argument(
         "--train-output-dir",
         type=str,
         default=None,
-        help="Root dir containing trained hf_model/ dirs (skips training)",
+        help="Deprecated alias for --output-dir",
     )
     parser.add_argument(
         "--skip-training",
         action="store_true",
-        help="Skip training stage; requires --train-output-dir",
+        help="Skip training stage; requires --output-dir",
     )
     args = parser.parse_args()
 
-    if args.skip_training and not args.train_output_dir:
-        parser.error("--skip-training requires --train-output-dir")
+    output_dir = args.output_dir or args.train_output_dir
+    if args.skip_training and not output_dir:
+        parser.error("--skip-training requires --output-dir")
 
     # --- Stage 1: Training ---------------------------------------------------
     if not args.skip_training:
@@ -79,16 +97,24 @@ def main() -> None:
             "--multirun",
             *args.train_args.split(),
         ]
-        run_command(train_cmd, "Stage 1: Training")
+        if output_dir:
+            train_cmd.append(f"hydra.sweep.dir={output_dir}")
+        if not run_command(train_cmd, "Stage 1: Training"):
+            # Continuing would evaluate whatever models happen to be on disk
+            # from an earlier sweep and report them as this run's results.
+            print("[ERROR] Training failed; refusing to evaluate stale models.")
+            sys.exit(1)
 
     # --- Discover trained models ----------------------------------------------
-    if args.train_output_dir:
-        output_root = Path(args.train_output_dir)
-    else:
-        # Infer sweep dir from the train args by looking for the most recent
-        # outputs/benchmark/ directory.
-        output_root = Path("outputs/benchmark")
+    if not output_dir:
+        print(
+            "[ERROR] --output-dir was not given, so the models this run produced "
+            "cannot be told apart from earlier sweeps under outputs/benchmark/. "
+            "Re-run with --output-dir pointing at the sweep directory."
+        )
+        sys.exit(1)
 
+    output_root = Path(output_dir)
     model_dirs = find_hf_models(output_root)
     if not model_dirs:
         print(f"[ERROR] No hf_model/ directories found under {output_root}")
@@ -104,11 +130,16 @@ def main() -> None:
     for model_dir in model_dirs:
         hf_path = str((model_dir / "hf_model").resolve())
         label = f"Inference: {model_dir.name}"
+        # Write the evaluation next to the model it evaluated. Without this it
+        # lands in outputs/inference/<date>/<time>/, disconnected from the sweep,
+        # and benchmark.collect never sees it. No timestamp, so re-running the
+        # stage overwrites rather than accumulating orphans.
         inference_cmd = [
             sys.executable,
             "-m",
             "scdino.inference.run",
             f"local_model_path={hf_path}",
+            f"hydra.run.dir={(model_dir / 'inference').as_posix()}",
             *args.inference_args.split(),
         ]
         ok = run_command(inference_cmd, label)

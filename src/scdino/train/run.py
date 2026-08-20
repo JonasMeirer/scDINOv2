@@ -42,6 +42,9 @@ def main(cfg: DictConfig) -> None:
         )
 
     results = {
+        # Training and inference both write a file called results.json; `stage`
+        # is what lets benchmark.collect tell them apart and merge them.
+        "stage": "train",
         "seed": cfg.seed,
         "metrics": metrics,
         "model": {"num_parameters": num_params},
