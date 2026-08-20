@@ -1,5 +1,7 @@
 """Tests for dataset normalisation and the datamodule's path handling."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -135,7 +137,14 @@ class TestDataModulePaths:
 
 
 class TestLoadTiff:
-    def test_clip_max_bounds_the_output(self, tmp_path):
+    def test_clip_max_rescales_to_unit_range(self, tmp_path):
+        """clip_max must emit [0, 1] data, not raw counts.
+
+        The photometric augmentations run before T.Normalize and are
+        parameterised for a unit dynamic range (gamma 0.8-1.2, noise sigma
+        0.03). On raw counts gamma alone moved the model input by ~8 sigma
+        while noise and shift were numerically inert.
+        """
         import tifffile
 
         dm = make_datamodule(tmp_path, norm_type="clip_max", max_vals_clip=[10.0] * 5)
@@ -143,7 +152,62 @@ class TestLoadTiff:
         tifffile.imwrite(path, np.full((8, 8, 5), 1000.0, dtype=np.float32))
         out = dm.load_tiff(str(path))
         assert isinstance(out, torch.Tensor)
-        assert out.max().item() <= 10.0
+        # Everything is above the ceiling, so everything saturates at exactly 1.
+        assert out.max().item() == pytest.approx(1.0)
+        assert out.min().item() >= 0.0
+
+    def test_clip_max_maps_the_ceiling_to_one_per_channel(self, tmp_path):
+        import tifffile
+
+        ceilings = [10.0, 20.0, 40.0, 80.0, 160.0]
+        dm = make_datamodule(tmp_path, norm_type="clip_max", max_vals_clip=ceilings)
+        img = np.zeros((4, 4, 5), dtype=np.float32)
+        for c, ceiling in enumerate(ceilings):
+            img[..., c] = ceiling / 2.0
+        path = tmp_path / "crop.tiff"
+        tifffile.imwrite(path, img)
+
+        out = dm.load_tiff(str(path))
+        for c in range(5):
+            assert out[c].mean().item() == pytest.approx(0.5), f"channel {c}"
+
+    @pytest.mark.parametrize("norm_type", ["clip_max", "robust", "robust_2"])
+    def test_configured_statistics_are_used_verbatim(self, tmp_path, norm_type):
+        """One contract for every norm_type: norm_dict holds the statistics of
+        whatever the loader emits, and they reach T.Normalize unchanged.
+
+        No norm_type may rescale them behind the caller's back. clip_max used to,
+        which meant pasting the output of scratch/get_mean_std.py into the config
+        silently divided it by max_vals_clip a second time.
+        """
+        mean, std = [0.1, 0.2, 0.3, 0.4, 0.5], [0.6, 0.7, 0.8, 0.9, 1.0]
+        dm = make_datamodule(
+            tmp_path,
+            norm_type=norm_type,
+            max_vals_clip=[100.0] * 5,
+            norm_dict={norm_type: {"mean": mean, "std": std}},
+        )
+        assert list(dm.mean) == pytest.approx(mean)
+        assert list(dm.std) == pytest.approx(std)
+
+    def test_shipped_clip_max_statistics_match_the_unit_range_data(self):
+        """The committed stats must describe [0,1] data, not raw counts.
+
+        A raw-count mean in the hundreds here would mean the config and the
+        loader disagree about units, which normalises the input into nonsense.
+        """
+        from hydra import compose, initialize_config_dir
+
+        config_dir = (Path(__file__).resolve().parents[1] / "configs").as_posix()
+        with initialize_config_dir(config_dir=config_dir, version_base=None):
+            cfg = compose(config_name="train", overrides=[])
+        stats = cfg.datamodule.loader.norm_dict["clip_max"]
+        assert all(0.0 < m < 1.0 for m in stats.mean), stats.mean
+        assert all(0.0 < s < 1.0 for s in stats.std), stats.std
+
+    def test_clip_max_requires_ceilings(self, tmp_path):
+        with pytest.raises(ValueError, match="max_vals_clip"):
+            make_datamodule(tmp_path, norm_type="clip_max", max_vals_clip=None)
 
     def test_returns_channels_first(self, tmp_path):
         import tifffile

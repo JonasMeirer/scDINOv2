@@ -21,7 +21,7 @@ loader:
   prefetch_factor: 2
   pin_memory: true
   num_channels: 5
-  norm_type: "clip_max" # "robust" , "robust_2", "clip_max"
+  norm_type: "clip_max"
   norm_dict:
     robust:
       mean: [ 0.1078, -0.0185,  0.1480,  0.1136,  0.0834]
@@ -30,8 +30,8 @@ loader:
       mean: [0.2304, 0.0154, 0.2709, 0.1795, 0.1383]
       std: [0.3072, 0.1071, 0.3314, 0.2674, 0.2507]
     clip_max:
-      mean: [358.5443, 941.6513, 825.9841, 255.2261, 308.7898]
-      std: [499.9700,  151.3277, 1314.0288,  311.5910,  399.3656]
+      mean: [0.0972, 0.7408, 0.1030, 0.0761, 0.0893]
+      std: [0.1410, 0.1180, 0.1694, 0.1051, 0.0972]
   max_vals_clip: [3713.48, 1297.59, 6904.38, 3412.43, 3133.96]  # defined as the max 99% percentile across celltypes and channels
   max_train_samples: null
 

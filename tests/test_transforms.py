@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+import torchvision.transforms as T
 from omegaconf import OmegaConf
 
 from scdino.data.transforms.dino import (
@@ -204,3 +205,137 @@ class TestDINOViewTransform:
         )
         x = torch.rand(5, 16, 16)
         assert torch.equal(transform(x), x)
+
+
+class TestChannelDropSemantics:
+    """A dropped channel must read as "no information", not as an outlier."""
+
+    def test_fills_with_the_supplied_per_channel_value(self):
+        torch.manual_seed(0)
+        fill = [1.0, 2.0, 3.0, 4.0, 5.0]
+        out = RandomChannelDrop(fill=fill)(torch.zeros(5, 4, 4))
+        dropped = [c for c in range(5) if out[c].abs().sum() > 0]
+        assert len(dropped) == 1
+        assert out[dropped[0]].unique().tolist() == [fill[dropped[0]]]
+
+    def test_falls_back_to_zero_without_a_fill(self):
+        torch.manual_seed(0)
+        out = RandomChannelDrop()(torch.ones(5, 4, 4))
+        assert sum(out[c].abs().sum() == 0 for c in range(5)) == 1
+
+    def test_dropped_channel_is_exactly_zero_after_normalisation(self):
+        """The whole point: fill == dataset mean, so normalising sends it to 0.
+
+        Filling with a literal 0 instead normalises to -mean/std, which for the
+        Brightfield channel is a constant -6.2 against a natural range of ~±1 --
+        a marker the model can simply detect.
+        """
+        mean = [358.5443, 941.6513, 825.9841, 255.2261, 308.7898]
+        std = [499.9700, 151.3277, 1314.0288, 311.5910, 399.3656]
+        normalize = T.Normalize(mean=mean, std=std)
+
+        for seed in range(10):
+            torch.manual_seed(seed)
+            x = torch.tensor(mean, dtype=torch.float32)[:, None, None].expand(5, 4, 4)
+            z = normalize(RandomChannelDrop(fill=mean)(x.clone()))
+            assert torch.allclose(z, torch.zeros_like(z), atol=1e-4)
+
+    def test_zero_fill_would_produce_an_out_of_range_constant(self):
+        """Pins why the fill argument exists, so the default cannot regress."""
+        mean = [358.5443, 941.6513, 825.9841, 255.2261, 308.7898]
+        std = [499.9700, 151.3277, 1314.0288, 311.5910, 399.3656]
+        worst = max(m / s for m, s in zip(mean, std))
+        assert worst > 6.0, (
+            "expected the Brightfield channel to be the pathological one"
+        )
+
+
+class TestAugmentationEffectSizes:
+    """Regression guard for the augmentation-ordering defect.
+
+    Every photometric augmentation must move the tensor the model actually
+    receives by a non-trivial but non-dominant amount. Before the loader was
+    changed to emit [0, 1] data, `gaussian_noise` and `intensity_shift` were
+    numerically inert (~1e-4 sigma) while `gamma` moved the input by ~8 sigma,
+    so three augmentation ablations were not measuring what they claimed.
+
+    The bounds are deliberately wide: this catches "does nothing" and "swamps
+    the signal", not small parameter tweaks.
+    """
+
+    MEAN = [358.5443, 941.6513, 825.9841, 255.2261, 308.7898]
+    STD = [499.9700, 151.3277, 1314.0288, 311.5910, 399.3656]
+    CLIP = [3713.48, 1297.59, 6904.38, 3412.43, 3133.96]
+
+    LOWER, UPPER = 0.01, 1.0
+
+    def _quiet_cfg(self, **overrides):
+        base = dict(
+            do_center_crop=True,
+            hf_prob=0,
+            vf_prob=0,
+            rr_prob=0,
+            intensity_scale_prob=0,
+            intensity_shift_prob=0,
+            gamma_prob=0,
+            gaussian_noise_prob=0,
+            random_channel_drop_prob=0,
+            gaussian_blur=[0.0, 0.0, 0.0],
+            cutout_prob=0.0,
+            n_local_views=0,
+            global_crop_size=32,
+            local_crop_size=16,
+            normalize={
+                "mean": [m / c for m, c in zip(self.MEAN, self.CLIP)],
+                "std": [s / c for s, c in zip(self.STD, self.CLIP)],
+            },
+        )
+        base.update(overrides)
+        return OmegaConf.create(base)
+
+    def _images(self, n=6, hw=32):
+        """Unit-range images with realistic right-skewed channel statistics."""
+        rng = torch.Generator().manual_seed(0)
+        out = []
+        for _ in range(n):
+            chans = []
+            for m, s, c in zip(self.MEAN, self.STD, self.CLIP):
+                x = torch.rand(hw, hw, generator=rng) * (s / c) + (m / c)
+                chans.append(x.clamp(0.0, 1.0))
+            out.append(torch.stack(chans))
+        return out
+
+    def _view(self, img, cfg, seed):
+        torch.manual_seed(seed)
+        return DINOTransform(cfg)(img)[0]
+
+    @pytest.mark.parametrize(
+        "name,override",
+        [
+            ("intensity_scale", {"intensity_scale_prob": 1.0}),
+            ("intensity_shift", {"intensity_shift_prob": 1.0}),
+            ("gamma", {"gamma_prob": 1.0}),
+            ("gaussian_noise", {"gaussian_noise_prob": 1.0}),
+            ("channel_drop", {"random_channel_drop_prob": 1.0}),
+        ],
+    )
+    def test_effect_size_is_neither_inert_nor_dominant(self, name, override):
+        baseline_cfg = self._quiet_cfg()
+        active_cfg = self._quiet_cfg(**override)
+        deltas = [
+            (self._view(img, active_cfg, seed) - self._view(img, baseline_cfg, seed))
+            .abs()
+            .mean()
+            .item()
+            for seed in range(4)
+            for img in self._images()
+        ]
+        median = sorted(deltas)[len(deltas) // 2]
+        assert median > self.LOWER, (
+            f"{name} moves the model input by only {median:.5f} sigma -- it is "
+            "effectively a no-op, so any ablation of it measures nothing"
+        )
+        assert median < self.UPPER, (
+            f"{name} moves the model input by {median:.3f} sigma, swamping the "
+            "signal; check that the loader emits unit-range data"
+        )

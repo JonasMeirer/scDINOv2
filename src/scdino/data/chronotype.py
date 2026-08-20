@@ -60,7 +60,7 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
             self.std = [self.std[i] for i in idx]
             if self.max_vals_clip is not None:
                 self.max_vals_clip = [self.max_vals_clip[i] for i in idx]
-
+                
         transforms.normalize = {"mean": self.mean, "std": self.std}  # needed for Trafo
         self.resize = transforms.get("resize", None)
         self.train_transform = Trafo(model, mode, transforms)
@@ -231,8 +231,10 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
         return loaders
 
     def clip(self, x):
-        x = np.clip(x, max=self.max_vals_clip)
-        return x
+        """Clip each channel at its ceiling and rescale that ceiling to 1.0."""
+        ceilings = np.asarray(self.max_vals_clip, dtype=np.float32)
+        x = np.clip(x, None, ceilings).astype(np.float32)
+        return x / ceilings
 
     def load_tiff(self, path):
         img = tifffile.imread(path)  # (50, 50, 5)

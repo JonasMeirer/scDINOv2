@@ -251,7 +251,10 @@ class DINOViewTransform:
             T.RandomApply(
                 [AddGaussianNoise(sigma=gaussian_noise_sigma)], p=gaussian_noise_prob
             ),
-            T.RandomApply([RandomChannelDrop()], p=random_channel_drop_prob),
+            T.RandomApply(
+                [RandomChannelDrop(fill=normalize["mean"] if normalize else None)],
+                p=random_channel_drop_prob,
+            ),
             T.RandomApply(
                 [T.GaussianBlur(kernel_size=kernel_size, sigma=sigmas)], p=gaussian_blur
             ),
@@ -338,10 +341,29 @@ class AddGaussianNoise:
 
 
 class RandomChannelDrop:
-    """Zeros out one randomly chosen fluorescence channel."""
+    """Replaces one randomly chosen fluorescence channel with a flat plane.
+
+    The fill value should be the channel's dataset mean, so that after the
+    trailing ``T.Normalize`` the dropped channel is exactly 0 -- carrying no
+    information, and indistinguishable from an average channel.
+
+    Filling with a literal 0 instead (the previous behaviour) is normalised to
+    ``-mean/std``, which for the Brightfield channel is a constant -6.2 against
+    a natural range of about +/-1. That is trivially detectable, so the model
+    learns to recognise the augmentation rather than to tolerate a missing
+    channel.
+
+    Args:
+        fill:
+            Per-channel fill values, normally the same means passed to
+            ``T.Normalize``. If None, falls back to filling with 0.
+    """
+
+    def __init__(self, fill: Optional[Sequence[float]] = None):
+        self.fill = None if fill is None else torch.as_tensor(fill, dtype=torch.float32)
 
     def __call__(self, x):
-        idx = torch.randint(0, x.size(0), (1,))
+        idx = int(torch.randint(0, x.size(0), (1,)))
         out = x.clone()
-        out[idx] = 0
+        out[idx] = 0.0 if self.fill is None else self.fill[idx].to(x.dtype)
         return out

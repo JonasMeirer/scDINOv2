@@ -21,7 +21,7 @@ loader:
   prefetch_factor: 2
   pin_memory: true
   num_channels: 2
-  norm_type: "robust_2" # "robust" , "robust_2", "clip_max"
+  norm_type: "clip_max" # "robust" , "robust_2", "clip_max"
   norm_dict:
     robust:
       mean: [-0.0185,  0.1480]
@@ -30,8 +30,8 @@ loader:
       mean: [0.0154, 0.2709]
       std: [0.1071, 0.3314]
     clip_max:
-      mean: [961.2516, 707.3349]
-      std: [153.2045, 1150.2218]
+      mean: [0.739424, 0.117889]
+      std: [0.117850, 0.191704]
   max_vals_clip: [1300, 6000]
   max_train_samples: null
 
