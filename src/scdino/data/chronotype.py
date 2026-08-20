@@ -60,7 +60,7 @@ class CHRONOTYPEDataModule(L.LightningDataModule):
             self.std = [self.std[i] for i in idx]
             if self.max_vals_clip is not None:
                 self.max_vals_clip = [self.max_vals_clip[i] for i in idx]
-                
+
         transforms.normalize = {"mean": self.mean, "std": self.std}  # needed for Trafo
         self.resize = transforms.get("resize", None)
         self.train_transform = Trafo(model, mode, transforms)
