@@ -33,6 +33,9 @@ python -m scdino.train.run \
 directory. Hydra resolves `configs/` relative to the package source, so the
 commands below do not need to be run from the repository root.
 
+The dataset to run the benchmarks in our study is openly available at a the FAIR-compliant repository of ETH Zurich as [Morphologically annotated single-cell images of human PBMCs
+](https://doi.org/10.3929/ethz-c-000806089). It contains >1.3 million single-cell images of peripheral blood mononuclear cells spanning seven different immune cell types.  
+
 ## Training
 
 ```bash
