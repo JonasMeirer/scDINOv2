@@ -105,6 +105,28 @@ Produces `benchmark_summary.csv` (one row per run) and
 `benchmark_summary_agg.csv` (mean/std across seeds).
 
 
+## Published weights
+
+The trained DINOv2 backbone is published on Hugging Face as a plain **timm**
+checkpoint, so users of the weights install nothing from this repository.
+
+| Model | Architecture | Parameters | Input | Embedding | Weights |
+|---|---|---|---|---|---|
+| scdino-v2-base | ViT (DINOv2), patch 4, depth 12, 8 heads, 8 register tokens | 5.2 M | 5 × 56 × 56 (crops of 50 × 50 px, resized) | 128 | [CSEM-AI4LS/scdino-v2-base](https://huggingface.co/CSEM-AI4LS/scdino-v2-base) |
+
+See [`release/`](release/README.md) for how to use the weights, and
+[`release/tutorial.ipynb`](release/tutorial.ipynb) for a walkthrough on the
+public PBMC data, from raw crops to a cell-type confusion matrix.
+
+**Preprocessing** Each channel is clipped at a ceiling and
+scaled to [0, 1], resized to 56 × 56 and standardized with a mean and std. The
+constants are stored in the model's `config.json`:
+
+- Data from the training setup (the public PBMC data, the same microscope and
+  settings): use the model's constants unchanged.
+- Data from another setup: the model's constants might not fit. See
+  [Preprocessing](release/README.md#preprocessing) for more guidance.
+
 ## Classical baseline
 
 Extract Cellpose morphological features and evaluate with kNN:

@@ -1,0 +1,8 @@
+# Everything a user of the published weights needs. The scdino package is NOT
+# required. Install with: pip install -r requirements-user.txt
+torch>=2.2
+timm>=1.0.15
+huggingface_hub>=0.26   # only to download the model from the Hub
+tifffile>=2024.1.1
+numpy>=1.26
+scikit-learn>=1.4       # only for the tutorial (linear head, confusion matrix)
